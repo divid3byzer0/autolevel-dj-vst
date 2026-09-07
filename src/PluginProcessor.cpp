@@ -8,7 +8,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::ParameterID{ID_TARGET_LUFS, 1},
         "Target LUFS",
         juce::NormalisableRange<float>(-24.0f, -4.0f, 0.5f),
-        -9.0f,
+        -14.0f,
         juce::AudioParameterFloatAttributes().withLabel("LUFS")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -43,7 +43,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::ParameterID{ID_TONE_SLOPE, 1},
         "Tone Slope",
         juce::NormalisableRange<float>(-6.0f, 0.0f, 0.1f),
-        -2.0f,
+        -1.5f,
         juce::AudioParameterFloatAttributes().withLabel("dB/oct")));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
@@ -169,12 +169,12 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     if (totalNumInputChannels < 2) return;
 
     autolevel::dsp::EngineParameters params;
-    params.targetLUFS = m_targetLufsParam ? m_targetLufsParam->load() : -9.0f;
+    params.targetLUFS = m_targetLufsParam ? m_targetLufsParam->load() : -14.0f;
     params.maxBoostDb = m_maxBoostParam ? m_maxBoostParam->load() : 12.0f;
     params.maxCutDb = m_maxCutParam ? m_maxCutParam->load() : 12.0f;
     params.levelResponse = m_levelResponseParam ? m_levelResponseParam->load() : 0.85f;
     params.compressionAmount = m_compressionAmountParam ? m_compressionAmountParam->load() : 0.5f;
-    params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -2.0f;
+    params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -1.5f;
 
     int profileIdx = m_targetProfileParam ? juce::roundToInt(m_targetProfileParam->load()) : 1;
     params.targetProfile = (profileIdx == 0)
