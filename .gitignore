@@ -1,0 +1,17 @@
+# Build directories
+build/
+cmake-build-*/
+.build/
+
+# IDE files
+.DS_Store
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+
+# Generated files
+*.user
+*.suo
+*.sln
+compile_commands.json
