@@ -370,6 +370,73 @@ void testSubHarmonicWeightInjector() {
     std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing sub-bass from mud." << std::endl;
 }
 
+void testAirHarmonicExciter() {
+    std::cout << "[TEST] AirHarmonicExciter high-frequency sheen & adaptive protection..." << std::endl;
+    AirHarmonicExciter exciter;
+    double sampleRate = 48000.0;
+    exciter.prepare(sampleRate);
+
+    // 1. Test AirWeight::OFF is 100% bit-identical bypass
+    size_t n = 4800;
+    std::vector<float> origL(n), origR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
+        origL[i] = s;
+        origR[i] = s * 0.8f;
+    }
+    std::vector<float> passL = origL;
+    std::vector<float> passR = origR;
+    exciter.process(passL.data(), passR.data(), n, AirWeight::OFF);
+    for (size_t i = 0; i < n; ++i) {
+        assert(passL[i] == origL[i]);
+        assert(passR[i] == origR[i]);
+    }
+    std::cout << "  -> PASS: AirWeight::OFF is 100% bit-identical bypass." << std::endl;
+
+    // 2. Test high harmonic sheen generation on a 5 kHz vintage track (zero native 10 kHz+ content)
+    exciter.reset();
+    std::vector<float> vintageL(n), vintageR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
+        vintageL[i] = s;
+        vintageR[i] = s;
+    }
+    exciter.process(vintageL.data(), vintageR.data(), n, AirWeight::MED);
+
+    // Measure discrete Fourier coefficient at 10 kHz (2nd harmonic / octave doubling)
+    double sumSin10 = 0.0, sumCos10 = 0.0;
+    for (size_t i = 2400; i < n; ++i) {
+        double phase = 2.0 * TEST_PI * 10000.0 * i / sampleRate;
+        sumSin10 += vintageL[i] * std::sin(phase);
+        sumCos10 += vintageL[i] * std::cos(phase);
+    }
+    double mag10kHz = (2.0 / 2400.0) * std::sqrt(sumSin10 * sumSin10 + sumCos10 * sumCos10);
+    std::cout << "  Input 5 kHz tone -> Generated 10 kHz air harmonic magnitude: " << mag10kHz << std::endl;
+    assert(mag10kHz > 0.015); // Clear harmonic generation detected!
+    std::cout << "  -> PASS: 10 kHz octave harmonic generated cleanly from 5 kHz source." << std::endl;
+
+    // 3. Test adaptive suppression: when a modern track already has strong native 12 kHz air
+    exciter.reset();
+    std::vector<float> modernL(n), modernR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
+        float nativeAir = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
+        modernL[i] = mid + nativeAir;
+        modernR[i] = mid + nativeAir;
+    }
+    std::vector<float> modernCopyL = modernL;
+    exciter.process(modernL.data(), modernR.data(), n, AirWeight::MED);
+
+    // Measure added difference on modern track
+    double maxDiff = 0.0;
+    for (size_t i = 2400; i < n; ++i) {
+        maxDiff = std::max(maxDiff, static_cast<double>(std::abs(modernL[i] - modernCopyL[i])));
+    }
+    std::cout << "  Adaptive suppression injected amplitude on bright modern track: " << maxDiff << std::endl;
+    assert(maxDiff < 0.06); // Heavily suppressed on already-bright mixes
+    std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing air from harshness." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -383,6 +450,7 @@ int main() {
     testMbcSpeedBallistics();
     testPostMbcGain();
     testSubHarmonicWeightInjector();
+    testAirHarmonicExciter();
     testFullChain();
 
     std::cout << "============================================" << std::endl;

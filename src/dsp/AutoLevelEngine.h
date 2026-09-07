@@ -3,6 +3,7 @@
 #include "LoudnessMeter.h"
 #include "Leveler.h"
 #include "SubHarmonicSynthesizer.h"
+#include "AirHarmonicExciter.h"
 #include "MultibandCompressor.h"
 #include "SafetyLimiter.h"
 #include <atomic>
@@ -20,6 +21,7 @@ struct EngineParameters {
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
     SubWeight subWeight = SubWeight::OFF;
+    AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
     float ceilingDb = -1.5f;
@@ -39,6 +41,8 @@ struct EngineVisualState {
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
     SubWeight activeSubWeight = SubWeight::OFF;
     float subInjectedLevel = 0.0f;
+    AirWeight activeAirWeight = AirWeight::OFF;
+    float airInjectedLevel = 0.0f;
     float activeToneSlope = -2.0f;
     float postMbcGainDb = 0.0f;
 };
@@ -52,6 +56,7 @@ public:
         m_loudnessMeter.prepare(sampleRate);
         m_leveler.prepare(sampleRate);
         m_subHarmonics.prepare(sampleRate);
+        m_airExciter.prepare(sampleRate);
         m_mbc.prepare(sampleRate);
         m_limiter.prepare(sampleRate);
         reset();
@@ -61,12 +66,13 @@ public:
         m_loudnessMeter.reset();
         m_leveler.reset();
         m_subHarmonics.reset();
+        m_airExciter.reset();
         m_mbc.reset();
         m_limiter.reset();
     }
 
     /**
-     * Exact chain: AGC -> Sub-Harmonics -> Multiband Compressor (MBC) -> Post-Gain -> Limiter
+     * Exact chain: AGC -> Sub-Harmonics -> Air Exciter -> Multiband Compressor (MBC) -> Post-Gain -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         if (params.bypass || numSamples == 0) {
@@ -93,6 +99,9 @@ public:
 
         // 3.5. Stage 1.5: Sub-Harmonic Weight Injector (clean mono sub-octave)
         m_subHarmonics.process(left, right, numSamples, params.subWeight);
+
+        // 3.6. Stage 1.6: High-Frequency Air Exciter (silky top-end sheen)
+        m_airExciter.process(left, right, numSamples, params.airWeight);
 
         // 4. Stage 2: 6-band Multiband Dynamic Tone Shaper (thresholds linked to tone curve & profile)
         MBCParams mbcParams;
@@ -132,6 +141,8 @@ public:
         m_visualState.activeMbcSpeed = params.mbcSpeed;
         m_visualState.activeSubWeight = params.subWeight;
         m_visualState.subInjectedLevel = m_subHarmonics.getInjectedLevel();
+        m_visualState.activeAirWeight = params.airWeight;
+        m_visualState.airInjectedLevel = m_airExciter.getInjectedLevel();
         m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
         m_visualState.postMbcGainDb = params.postMbcGainDb;
     }
@@ -145,6 +156,7 @@ private:
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
     SubHarmonicSynthesizer m_subHarmonics;
+    AirHarmonicExciter m_airExciter;
     MultibandCompressor m_mbc;
     SafetyLimiter m_limiter;
 

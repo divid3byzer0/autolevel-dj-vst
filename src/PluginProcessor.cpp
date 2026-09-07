@@ -64,6 +64,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::StringArray{"Off", "Low", "Medium", "High"},
         0)); // Default: Off (backward compatible)
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_AIR_EXCITER, 1},
+        "Air Exciter",
+        juce::StringArray{"Off", "Low", "Medium", "High"},
+        0)); // Default: Off (backward compatible)
+
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_POST_MBC_GAIN, 1},
         "Post Gain",
@@ -106,6 +112,7 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_targetProfileParam = m_apvts.getRawParameterValue(ID_TARGET_PROFILE);
     m_mbcSpeedParam = m_apvts.getRawParameterValue(ID_MBC_SPEED);
     m_subWeightParam = m_apvts.getRawParameterValue(ID_SUB_WEIGHT);
+    m_airExciterParam = m_apvts.getRawParameterValue(ID_AIR_EXCITER);
     m_postMbcGainParam = m_apvts.getRawParameterValue(ID_POST_MBC_GAIN);
     m_ceilingDbParam = m_apvts.getRawParameterValue(ID_CEILING_DB);
     m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
@@ -176,6 +183,12 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     else if (subWeightIdx == 2) params.subWeight = autolevel::dsp::SubWeight::MED;
     else if (subWeightIdx == 3) params.subWeight = autolevel::dsp::SubWeight::HIGH;
     else params.subWeight = autolevel::dsp::SubWeight::OFF;
+
+    int airExciterIdx = m_airExciterParam ? juce::roundToInt(m_airExciterParam->load()) : 0;
+    if (airExciterIdx == 1) params.airWeight = autolevel::dsp::AirWeight::LOW;
+    else if (airExciterIdx == 2) params.airWeight = autolevel::dsp::AirWeight::MED;
+    else if (airExciterIdx == 3) params.airWeight = autolevel::dsp::AirWeight::HIGH;
+    else params.airWeight = autolevel::dsp::AirWeight::OFF;
 
     params.postMbcGainDb = m_postMbcGainParam ? m_postMbcGainParam->load() : 0.0f;
     params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -1.5f;

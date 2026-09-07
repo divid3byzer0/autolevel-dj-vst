@@ -315,11 +315,13 @@ MultibandMeterRack::MultibandMeterRack() {
 }
 
 void MultibandMeterRack::updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
-                                     autolevel::dsp::TargetProfile profile,
-                                     autolevel::dsp::SubWeight subWeight)
+                                      autolevel::dsp::TargetProfile profile,
+                                      autolevel::dsp::SubWeight subWeight,
+                                      autolevel::dsp::AirWeight airWeight)
 {
     m_profile = profile;
     m_subWeight = subWeight;
+    m_airWeight = airWeight;
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float gr = gainReductions[b]; // Negative dB (0 to -12)
         m_currentGr[b] = gr;
@@ -376,11 +378,12 @@ void MultibandMeterRack::paint(juce::Graphics& g)
         float barW = std::min(colW - 8.0f, 34.0f);
         float barX = bx + (colW - barW) * 0.5f;
 
-        // Band Name at top (glows cyan with '+' indicator if Sub Weight is active)
+        // Band Name at top (glows cyan with '+' indicator if Sub Weight or Air Exciter is active)
         bool isSubWithWeight = (b == 0 && m_subWeight != autolevel::dsp::SubWeight::OFF);
-        g.setColour(isSubWithWeight ? juce::Colour(0xff00e5ff) : juce::Colour(0xffd0d7e2));
+        bool isAirWithSheen = (b == 5 && m_airWeight != autolevel::dsp::AirWeight::OFF);
+        g.setColour((isSubWithWeight || isAirWithSheen) ? juce::Colour(0xff00e5ff) : juce::Colour(0xffd0d7e2));
         g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        juce::String name = isSubWithWeight ? "SUB +" : juce::String(bandNames[static_cast<size_t>(b)].data());
+        juce::String name = isSubWithWeight ? "SUB +" : (isAirWithSheen ? "AIR +" : juce::String(bandNames[static_cast<size_t>(b)].data()));
         g.drawText(name, static_cast<int>(bx), static_cast<int>(bounds.getY() + 5), static_cast<int>(colW), 16, juce::Justification::centred);
 
         // Meter Trough
@@ -518,7 +521,7 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_mbcSpeedBox.addItem("Fast", 3);
     addChildComponent(m_mbcSpeedBox);
 
-    m_mbcSpeedLabel.setText("MBC SPEED:", juce::dontSendNotification);
+    m_mbcSpeedLabel.setText("SPEED:", juce::dontSendNotification);
     m_mbcSpeedLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_mbcSpeedLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_mbcSpeedLabel.setJustificationType(juce::Justification::centredRight);
@@ -543,7 +546,7 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_subWeightBox.addItem("High", 4);
     addChildComponent(m_subWeightBox);
 
-    m_subWeightLabel.setText("SUB WEIGHT:", juce::dontSendNotification);
+    m_subWeightLabel.setText("SUB:", juce::dontSendNotification);
     m_subWeightLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_subWeightLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_subWeightLabel.setJustificationType(juce::Justification::centredRight);
@@ -562,6 +565,32 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupSubWeightBtn(m_subWeightMedBtn, 2);
     setupSubWeightBtn(m_subWeightHighBtn, 3);
 
+    // High-Frequency Air Exciter Controls (Segmented header buttons in Card 4)
+    m_airExciterBox.addItem("Off", 1);
+    m_airExciterBox.addItem("Low", 2);
+    m_airExciterBox.addItem("Medium", 3);
+    m_airExciterBox.addItem("High", 4);
+    addChildComponent(m_airExciterBox);
+
+    m_airExciterLabel.setText("AIR:", juce::dontSendNotification);
+    m_airExciterLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_airExciterLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_airExciterLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(m_airExciterLabel);
+
+    auto setupAirExciterBtn = [this](juce::TextButton& btn, int index) {
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, index]() {
+            m_airExciterBox.setSelectedItemIndex(index, juce::sendNotificationSync);
+        };
+        addAndMakeVisible(btn);
+    };
+
+    setupAirExciterBtn(m_airExciterOffBtn, 0);
+    setupAirExciterBtn(m_airExciterLowBtn, 1);
+    setupAirExciterBtn(m_airExciterMedBtn, 2);
+    setupAirExciterBtn(m_airExciterHighBtn, 3);
+
     // APVTS Attachments
     auto& apvts = m_processor.getAPVTS();
     m_targetLufsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -578,6 +607,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_MBC_SPEED, m_mbcSpeedBox);
     m_subWeightAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_SUB_WEIGHT, m_subWeightBox);
+    m_airExciterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_AIR_EXCITER, m_airExciterBox);
     m_maxBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MAX_BOOST, m_maxBoostSlider);
     m_maxCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -646,9 +677,16 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_subWeightMedBtn.setToggleState(subWeightIdx == 2, juce::dontSendNotification);
     m_subWeightHighBtn.setToggleState(subWeightIdx == 3, juce::dontSendNotification);
 
+    // Sync Air Exciter segmented buttons
+    int airIdx = m_airExciterBox.getSelectedItemIndex();
+    m_airExciterOffBtn.setToggleState(airIdx == 0, juce::dontSendNotification);
+    m_airExciterLowBtn.setToggleState(airIdx == 1, juce::dontSendNotification);
+    m_airExciterMedBtn.setToggleState(airIdx == 2, juce::dontSendNotification);
+    m_airExciterHighBtn.setToggleState(airIdx == 3, juce::dontSendNotification);
+
     // Update Visualizers
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
-    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeSubWeight);
+    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeSubWeight, m_latestState.activeAirWeight);
 
     repaint();
 }
@@ -792,15 +830,15 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
 
     // Card 4: 6-Band Dynamics Metering Card (Middle Full Width)
     juce::Rectangle<int> mbcCard(20, 236, 800, 158);
-    drawCard(mbcCard, "DYNAMIC TONE SHAPER");
+    drawCard(mbcCard, "TONE SHAPER");
 
-    // Real-time Sub-Harmonic Injection Activity Meter in Card 4 header
-    float meterX = 458.0f;
-    float meterY = 244.0f;
-    float meterW = 82.0f;
-    float meterH = 16.0f;
+    // 1. Real-time Sub-Harmonic Injection Activity Meter in Card 4 header
+    float subMeterX = 300.0f;
+    float subMeterY = 244.0f;
+    float subMeterW = 46.0f;
+    float subMeterH = 16.0f;
 
-    juce::Rectangle<float> subTrough(meterX, meterY, meterW, meterH);
+    juce::Rectangle<float> subTrough(subMeterX, subMeterY, subMeterW, subMeterH);
     g.setColour(juce::Colour(0xff0a0d13));
     g.fillRoundedRectangle(subTrough, 3.0f);
     g.setColour(juce::Colour(0xff1e2634));
@@ -810,24 +848,67 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     if (!isSubActive) {
         g.setColour(juce::Colour(0xff454f5e));
         g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-        g.drawText("METER OFF", subTrough, juce::Justification::centred);
+        g.drawText("OFF", subTrough, juce::Justification::centred);
     } else {
-        constexpr int NUM_LEDS = 6;
+        constexpr int NUM_LEDS = 4;
         float normLevel = std::clamp(m_latestState.subInjectedLevel / 0.30f, 0.0f, 1.0f);
         int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
 
-        float ledW = 10.0f;
+        float ledW = 8.0f;
         float ledH = 10.0f;
-        float ledY = meterY + 3.0f;
-        float startLedX = meterX + 5.0f;
+        float ledY = subMeterY + 3.0f;
+        float startLedX = subMeterX + 4.0f;
 
         for (int i = 0; i < NUM_LEDS; ++i) {
             float lx = startLedX + static_cast<float>(i) * (ledW + 2.0f);
             juce::Rectangle<float> ledRect(lx, ledY, ledW, ledH);
 
             if (i < activeLeds) {
-                juce::Colour col = (i < 3) ? juce::Colour(0xff00e5ff) :
-                                   (i < 5) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300);
+                juce::Colour col = (i < 2) ? juce::Colour(0xff00e5ff) :
+                                   (i < 3) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300);
+                g.setColour(col);
+                g.fillRoundedRectangle(ledRect, 1.5f);
+            } else {
+                g.setColour(juce::Colour(0xff141a24));
+                g.fillRoundedRectangle(ledRect, 1.5f);
+            }
+        }
+    }
+
+    // 2. Real-time High-Frequency Air Exciter Activity Meter in Card 4 header
+    float airMeterX = 530.0f;
+    float airMeterY = 244.0f;
+    float airMeterW = 46.0f;
+    float airMeterH = 16.0f;
+
+    juce::Rectangle<float> airTrough(airMeterX, airMeterY, airMeterW, airMeterH);
+    g.setColour(juce::Colour(0xff0a0d13));
+    g.fillRoundedRectangle(airTrough, 3.0f);
+    g.setColour(juce::Colour(0xff1e2634));
+    g.drawRoundedRectangle(airTrough, 3.0f, 1.0f);
+
+    bool isAirActive = (m_latestState.activeAirWeight != autolevel::dsp::AirWeight::OFF);
+    if (!isAirActive) {
+        g.setColour(juce::Colour(0xff454f5e));
+        g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+        g.drawText("OFF", airTrough, juce::Justification::centred);
+    } else {
+        constexpr int NUM_LEDS = 4;
+        float normLevel = std::clamp(m_latestState.airInjectedLevel / 0.25f, 0.0f, 1.0f);
+        int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
+
+        float ledW = 8.0f;
+        float ledH = 10.0f;
+        float ledY = airMeterY + 3.0f;
+        float startLedX = airMeterX + 4.0f;
+
+        for (int i = 0; i < NUM_LEDS; ++i) {
+            float lx = startLedX + static_cast<float>(i) * (ledW + 2.0f);
+            juce::Rectangle<float> ledRect(lx, ledY, ledW, ledH);
+
+            if (i < activeLeds) {
+                juce::Colour col = (i < 2) ? juce::Colour(0xff00e5ff) :
+                                   (i < 3) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300);
                 g.setColour(col);
                 g.fillRoundedRectangle(ledRect, 1.5f);
             } else {
@@ -858,18 +939,25 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
     m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
 
-    // Sub Weight Controls inside Card 4 header
-    m_subWeightLabel.setBounds(195, 242, 78, 20);
-    m_subWeightOffBtn.setBounds(276, 242, 38, 20);
-    m_subWeightLowBtn.setBounds(318, 242, 40, 20);
-    m_subWeightMedBtn.setBounds(362, 242, 40, 20);
-    m_subWeightHighBtn.setBounds(406, 242, 44, 20);
+    // Sub Weight Controls inside Card 4 header (x = 126 to 346)
+    m_subWeightLabel.setBounds(126, 242, 30, 20);
+    m_subWeightOffBtn.setBounds(158, 242, 32, 20);
+    m_subWeightLowBtn.setBounds(192, 242, 32, 20);
+    m_subWeightMedBtn.setBounds(226, 242, 32, 20);
+    m_subWeightHighBtn.setBounds(260, 242, 36, 20);
 
-    // MBC Speed Controls inside Card 4 header
-    m_mbcSpeedLabel.setBounds(555, 242, 75, 20);
-    m_speedSlowBtn.setBounds(635, 242, 48, 20);
-    m_speedNormalBtn.setBounds(687, 242, 58, 20);
-    m_speedFastBtn.setBounds(749, 242, 48, 20);
+    // Air Exciter Controls inside Card 4 header (x = 358 to 576)
+    m_airExciterLabel.setBounds(358, 242, 28, 20);
+    m_airExciterOffBtn.setBounds(388, 242, 32, 20);
+    m_airExciterLowBtn.setBounds(422, 242, 32, 20);
+    m_airExciterMedBtn.setBounds(456, 242, 32, 20);
+    m_airExciterHighBtn.setBounds(490, 242, 36, 20);
+
+    // MBC Speed Controls inside Card 4 header (x = 594 to 800)
+    m_mbcSpeedLabel.setBounds(594, 242, 48, 20);
+    m_speedSlowBtn.setBounds(644, 242, 48, 20);
+    m_speedNormalBtn.setBounds(694, 242, 56, 20);
+    m_speedFastBtn.setBounds(752, 242, 48, 20);
 
     // 6-Band Meter Rack inside MBC Card
     m_meterRack.setBounds(26, 266, 788, 120);

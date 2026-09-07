@@ -61,7 +61,8 @@ public:
 
     void updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
                       autolevel::dsp::TargetProfile profile,
-                      autolevel::dsp::SubWeight subWeight);
+                      autolevel::dsp::SubWeight subWeight,
+                      autolevel::dsp::AirWeight airWeight);
 
     void paint(juce::Graphics& g) override;
 
@@ -71,6 +72,7 @@ private:
     std::array<int, autolevel::dsp::Bands::COUNT> m_peakHoldTimers{};
     autolevel::dsp::TargetProfile m_profile = autolevel::dsp::TargetProfile::MODERN_MIX;
     autolevel::dsp::SubWeight m_subWeight = autolevel::dsp::SubWeight::OFF;
+    autolevel::dsp::AirWeight m_airWeight = autolevel::dsp::AirWeight::OFF;
 };
 
 //==============================================================================
@@ -137,6 +139,15 @@ private:
     juce::TextButton m_subWeightLowBtn{"LOW"};
     juce::TextButton m_subWeightMedBtn{"MED"};
     juce::TextButton m_subWeightHighBtn{"HIGH"};
+
+    // High-Frequency Air Exciter Switcher (Off, Low, Med, High)
+    juce::ComboBox m_airExciterBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_airExciterAttachment;
+    juce::Label m_airExciterLabel;
+    juce::TextButton m_airExciterOffBtn{"OFF"};
+    juce::TextButton m_airExciterLowBtn{"LOW"};
+    juce::TextButton m_airExciterMedBtn{"MED"};
+    juce::TextButton m_airExciterHighBtn{"HIGH"};
 
     // Post-MBC Gain stage
     juce::Slider m_postGainSlider;
