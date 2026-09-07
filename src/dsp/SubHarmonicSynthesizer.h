@@ -64,10 +64,16 @@ public:
         m_envelope = 0.0;
         m_nativeSubEnergy = 0.0;
         m_bassEnergy = 0.0;
+        m_injectedLevel = 0.0f;
+    }
+
+    float getInjectedLevel() const noexcept {
+        return m_injectedLevel;
     }
 
     void process(float* left, float* right, size_t numSamples, SubWeight weight) {
         if (weight == SubWeight::OFF || numSamples == 0) {
+            m_injectedLevel = 0.0f;
             return;
         }
 
@@ -75,6 +81,8 @@ public:
         if (weight == SubWeight::LOW) targetGain = 0.22f;
         else if (weight == SubWeight::MED) targetGain = 0.45f;
         else if (weight == SubWeight::HIGH) targetGain = 0.75f;
+
+        float blockPeak = 0.0f;
 
         for (size_t s = 0; s < numSamples; ++s) {
             double mono = 0.5 * (static_cast<double>(left[s]) + static_cast<double>(right[s]));
@@ -124,6 +132,19 @@ public:
             float injected = static_cast<float>(cleanSub * targetGain * adaptiveScale);
             left[s] += injected;
             right[s] += injected;
+
+            float absInj = std::abs(injected);
+            if (absInj > blockPeak) {
+                blockPeak = absInj;
+            }
+        }
+
+        // Real-time peak decay for visual metering (~20 dB/s decay)
+        if (blockPeak > m_injectedLevel) {
+            m_injectedLevel = blockPeak;
+        } else {
+            float dt = static_cast<float>(numSamples) / static_cast<float>(m_sampleRate);
+            m_injectedLevel = std::max(0.0f, m_injectedLevel - dt * 1.5f);
         }
     }
 
@@ -148,6 +169,7 @@ private:
     double m_attackCoeff = 0.0;
     double m_releaseCoeff = 0.0;
     double m_energyCoeff = 0.0;
+    float m_injectedLevel = 0.0f;
 };
 
 } // namespace autolevel::dsp

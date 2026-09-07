@@ -38,6 +38,7 @@ struct EngineVisualState {
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
     SubWeight activeSubWeight = SubWeight::OFF;
+    float subInjectedLevel = 0.0f;
     float activeToneSlope = -2.0f;
     float postMbcGainDb = 0.0f;
 };
@@ -130,6 +131,7 @@ public:
         m_visualState.activeProfile = params.targetProfile;
         m_visualState.activeMbcSpeed = params.mbcSpeed;
         m_visualState.activeSubWeight = params.subWeight;
+        m_visualState.subInjectedLevel = m_subHarmonics.getInjectedLevel();
         m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
         m_visualState.postMbcGainDb = params.postMbcGainDb;
     }

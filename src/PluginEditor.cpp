@@ -792,7 +792,50 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
 
     // Card 4: 6-Band Dynamics Metering Card (Middle Full Width)
     juce::Rectangle<int> mbcCard(20, 236, 800, 158);
-    drawCard(mbcCard, "DYNAMIC TONE SHAPER (6-BAND CROSSOVER DYNAMICS)");
+    drawCard(mbcCard, "DYNAMIC TONE SHAPER");
+
+    // Real-time Sub-Harmonic Injection Activity Meter in Card 4 header
+    float meterX = 458.0f;
+    float meterY = 244.0f;
+    float meterW = 82.0f;
+    float meterH = 16.0f;
+
+    juce::Rectangle<float> subTrough(meterX, meterY, meterW, meterH);
+    g.setColour(juce::Colour(0xff0a0d13));
+    g.fillRoundedRectangle(subTrough, 3.0f);
+    g.setColour(juce::Colour(0xff1e2634));
+    g.drawRoundedRectangle(subTrough, 3.0f, 1.0f);
+
+    bool isSubActive = (m_latestState.activeSubWeight != autolevel::dsp::SubWeight::OFF);
+    if (!isSubActive) {
+        g.setColour(juce::Colour(0xff454f5e));
+        g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+        g.drawText("METER OFF", subTrough, juce::Justification::centred);
+    } else {
+        constexpr int NUM_LEDS = 6;
+        float normLevel = std::clamp(m_latestState.subInjectedLevel / 0.30f, 0.0f, 1.0f);
+        int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
+
+        float ledW = 10.0f;
+        float ledH = 10.0f;
+        float ledY = meterY + 3.0f;
+        float startLedX = meterX + 5.0f;
+
+        for (int i = 0; i < NUM_LEDS; ++i) {
+            float lx = startLedX + static_cast<float>(i) * (ledW + 2.0f);
+            juce::Rectangle<float> ledRect(lx, ledY, ledW, ledH);
+
+            if (i < activeLeds) {
+                juce::Colour col = (i < 3) ? juce::Colour(0xff00e5ff) :
+                                   (i < 5) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300);
+                g.setColour(col);
+                g.fillRoundedRectangle(ledRect, 1.5f);
+            } else {
+                g.setColour(juce::Colour(0xff141a24));
+                g.fillRoundedRectangle(ledRect, 1.5f);
+            }
+        }
+    }
 
     // Card 5: Parameters Panel (Bottom Full Width)
     juce::Rectangle<int> ctrlCard(20, 404, 800, 244);
@@ -816,17 +859,17 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
 
     // Sub Weight Controls inside Card 4 header
-    m_subWeightLabel.setBounds(230, 242, 82, 20);
-    m_subWeightOffBtn.setBounds(316, 242, 40, 20);
-    m_subWeightLowBtn.setBounds(360, 242, 44, 20);
-    m_subWeightMedBtn.setBounds(408, 242, 44, 20);
-    m_subWeightHighBtn.setBounds(456, 242, 48, 20);
+    m_subWeightLabel.setBounds(195, 242, 78, 20);
+    m_subWeightOffBtn.setBounds(276, 242, 38, 20);
+    m_subWeightLowBtn.setBounds(318, 242, 40, 20);
+    m_subWeightMedBtn.setBounds(362, 242, 40, 20);
+    m_subWeightHighBtn.setBounds(406, 242, 44, 20);
 
     // MBC Speed Controls inside Card 4 header
-    m_mbcSpeedLabel.setBounds(565, 242, 76, 20);
-    m_speedSlowBtn.setBounds(645, 242, 50, 20);
-    m_speedNormalBtn.setBounds(699, 242, 58, 20);
-    m_speedFastBtn.setBounds(761, 242, 50, 20);
+    m_mbcSpeedLabel.setBounds(555, 242, 75, 20);
+    m_speedSlowBtn.setBounds(635, 242, 48, 20);
+    m_speedNormalBtn.setBounds(687, 242, 58, 20);
+    m_speedFastBtn.setBounds(749, 242, 48, 20);
 
     // 6-Band Meter Rack inside MBC Card
     m_meterRack.setBounds(26, 266, 788, 120);
