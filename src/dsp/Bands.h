@@ -92,11 +92,12 @@ public:
     static inline std::array<float, COUNT> thresholdsFor(
         bool tilted,
         float toneSlopeDbPerOctave,
-        TargetProfile profile = TargetProfile::PINK_NOISE
+        TargetProfile profile = TargetProfile::PINK_NOISE,
+        float baseThresholdDb = MBC_THRESHOLD_DB
     ) {
         std::array<float, COUNT> out{};
         if (!tilted) {
-            out.fill(MBC_THRESHOLD_DB);
+            out.fill(baseThresholdDb);
             return out;
         }
 
@@ -111,7 +112,7 @@ public:
         }
         mean /= static_cast<float>(COUNT);
         for (size_t b = 0; b < COUNT; ++b) {
-            out[b] = MBC_THRESHOLD_DB + (out[b] - mean);
+            out[b] = baseThresholdDb + (out[b] - mean);
         }
         return out;
     }

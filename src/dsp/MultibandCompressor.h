@@ -13,6 +13,7 @@ struct MBCParams {
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
     float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-6.0 to 0.0 dB/oct, default -2.0)
     TargetProfile profile = TargetProfile::MODERN_MIX;
+    float baseThresholdDb = Bands::MBC_THRESHOLD_DB;
 };
 
 class BandCompressor {
@@ -142,7 +143,7 @@ public:
 
         // Calculate thresholds per band using exact Android Shaper formula
         std::array<float, Bands::COUNT> thresholds = Bands::thresholdsFor(
-            true, params.toneSlopeDbPerOctave, params.profile
+            true, params.toneSlopeDbPerOctave, params.profile, params.baseThresholdDb
         );
 
         // Compression ratio: 1.0 to 4.0 matching Android Shaper.kt

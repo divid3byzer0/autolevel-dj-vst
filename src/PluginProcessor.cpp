@@ -139,7 +139,7 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     params.compressionAmount = m_compressionAmountParam ? m_compressionAmountParam->load() : 0.5f;
     params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -2.0f;
 
-    int profileIdx = m_targetProfileParam ? static_cast<int>(m_targetProfileParam->load()) : 1;
+    int profileIdx = m_targetProfileParam ? juce::roundToInt(m_targetProfileParam->load()) : 1;
     params.targetProfile = (profileIdx == 0)
         ? autolevel::dsp::TargetProfile::PINK_NOISE
         : autolevel::dsp::TargetProfile::MODERN_MIX;

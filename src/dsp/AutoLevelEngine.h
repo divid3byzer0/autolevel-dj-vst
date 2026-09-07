@@ -28,8 +28,11 @@ struct EngineVisualState {
     float targetGainDb = 0.0f;
     bool isFrozen = false;
     std::array<float, Bands::COUNT> mbcGainReductionsDb{};
+    std::array<float, Bands::COUNT> mbcThresholdsDb{};
     float limiterGainReductionDb = 0.0f;
     float activeHalfLifeSeconds = 0.0f;
+    TargetProfile activeProfile = TargetProfile::MODERN_MIX;
+    float activeToneSlope = -2.0f;
 };
 
 class AutoLevelEngine {
@@ -84,6 +87,7 @@ public:
         mbcParams.compressionAmount = params.compressionAmount;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
+        mbcParams.baseThresholdDb = params.targetLUFS - 15.0f; // Exact -24 dBFS at default -9 LUFS
         m_mbc.process(left, right, numSamples, mbcParams);
 
         // 5. Stage 3: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
@@ -96,8 +100,13 @@ public:
         m_visualState.targetGainDb = m_leveler.getTargetGainDb();
         m_visualState.isFrozen = m_leveler.isFrozen();
         m_visualState.mbcGainReductionsDb = m_mbc.getGainReductionsDb();
+        m_visualState.mbcThresholdsDb = Bands::thresholdsFor(
+            true, params.toneSlopeDbPerOctave, params.targetProfile, mbcParams.baseThresholdDb
+        );
         m_visualState.limiterGainReductionDb = m_limiter.getGainReductionDb();
         m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
+        m_visualState.activeProfile = params.targetProfile;
+        m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
     }
 
     EngineVisualState getVisualState() const noexcept {
