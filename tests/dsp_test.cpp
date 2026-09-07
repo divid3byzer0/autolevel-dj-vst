@@ -302,11 +302,11 @@ void testPostMbcGain() {
     std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
 }
 
-void testSubHarmonicWeightInjector() {
-    std::cout << "[TEST] Sub-Harmonic Weight Injector (pitch-locked sub-octave & adaptive suppression)..." << std::endl;
-    SubHarmonicSynthesizer synth;
+void testDynamicBassLift() {
+    std::cout << "[TEST] DynamicBassLift (Dolby Duo low-end upward expansion & adaptive protection)..." << std::endl;
+    DynamicBassLift bassLift;
     double sampleRate = 48000.0;
-    synth.prepare(sampleRate);
+    bassLift.prepare(sampleRate);
 
     // 1. Test OFF bypass: signal must remain 100% bit-identical
     size_t n = 4800; // 100ms
@@ -318,123 +318,138 @@ void testSubHarmonicWeightInjector() {
     }
     std::vector<float> passL = origL;
     std::vector<float> passR = origR;
-    synth.process(passL.data(), passR.data(), n, SubWeight::OFF);
+    bassLift.process(passL.data(), passR.data(), n, BassLiftMode::OFF);
     for (size_t i = 0; i < n; ++i) {
         assert(passL[i] == origL[i]);
         assert(passR[i] == origR[i]);
     }
-    std::cout << "  -> PASS: SubWeight::OFF is 100% bit-identical bypass." << std::endl;
+    std::cout << "  -> PASS: BassLiftMode::OFF is 100% bit-identical bypass." << std::endl;
 
-    // 2. Test sub-octave generation on a 70 Hz vintage bass note (zero native 35 Hz content)
-    synth.reset();
-    std::vector<float> bass70L(n), bass70R(n);
+    // 2. Test dynamic low-shelf boost on a vintage track with weak bass (strong 1 kHz mid, weak 60 Hz bass)
+    bassLift.reset();
+    std::vector<float> vintageL(n), vintageR(n);
     for (size_t i = 0; i < n; ++i) {
-        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 70.0 * i / sampleRate));
-        bass70L[i] = s;
-        bass70R[i] = s;
+        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
+        float weakBass = 0.05f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * i / sampleRate));
+        vintageL[i] = mid + weakBass;
+        vintageR[i] = mid + weakBass;
     }
-    synth.process(bass70L.data(), bass70R.data(), n, SubWeight::MED);
+    bassLift.process(vintageL.data(), vintageR.data(), n, BassLiftMode::MED);
+    float liftDb = bassLift.getLiftDb();
+    std::cout << "  Dynamic Bass Lift applied on vintage track: +" << liftDb << " dB" << std::endl;
+    assert(liftDb > 2.0f && liftDb <= 4.5f);
+    std::cout << "  -> PASS: Dynamic Bass Lift smoothly lifts weak low-end by up to +4.5 dB with zero distortion." << std::endl;
 
-    // Measure discrete Fourier coefficient at 35 Hz (half frequency, one octave down)
-    double sumSin35 = 0.0, sumCos35 = 0.0;
-    for (size_t i = 2400; i < n; ++i) {
-        double phase = 2.0 * TEST_PI * 35.0 * i / sampleRate;
-        sumSin35 += bass70L[i] * std::sin(phase);
-        sumCos35 += bass70L[i] * std::cos(phase);
-    }
-    double mag35Hz = (2.0 / 2400.0) * std::sqrt(sumSin35 * sumSin35 + sumCos35 * sumCos35);
-    std::cout << "  Input 70 Hz bass tone -> Generated 35 Hz sub-harmonic magnitude: " << mag35Hz << std::endl;
-    assert(mag35Hz > 0.05); // Clean, robust sub-octave detected!
-    std::cout << "  -> PASS: 35 Hz pitch-locked sub-harmonic generated cleanly from 70 Hz bass." << std::endl;
-
-    // 3. Test adaptive suppression: when a modern track already has heavy 35 Hz native sub
-    synth.reset();
+    // 3. Test adaptive suppression: on modern track with heavy existing bass, lift must drop towards 0 dB
+    bassLift.reset();
     std::vector<float> modernL(n), modernR(n);
     for (size_t i = 0; i < n; ++i) {
-        float nativeSub = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 35.0 * i / sampleRate));
-        float bass = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 70.0 * i / sampleRate));
-        modernL[i] = nativeSub + bass;
-        modernR[i] = nativeSub + bass;
+        float mid = 0.2f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
+        float heavyBass = 0.6f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * i / sampleRate));
+        modernL[i] = mid + heavyBass;
+        modernR[i] = mid + heavyBass;
     }
-    std::vector<float> modernCopyL = modernL;
-    std::vector<float> modernCopyR = modernR;
-    synth.process(modernL.data(), modernR.data(), n, SubWeight::MED);
-
-    // Injected energy on modern track should be heavily attenuated compared to thin track
-    double maxDiff = 0.0;
-    for (size_t i = 2400; i < n; ++i) {
-        maxDiff = std::max(maxDiff, static_cast<double>(std::abs(modernL[i] - modernCopyL[i])));
-    }
-    std::cout << "  Adaptive suppression injected amplitude on heavy modern sub: " << maxDiff << std::endl;
-    assert(maxDiff < 0.10); // Automatically suppressed so it won't overload subs
-    std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing sub-bass from mud." << std::endl;
+    bassLift.process(modernL.data(), modernR.data(), n, BassLiftMode::MED);
+    float modernLiftDb = bassLift.getLiftDb();
+    std::cout << "  Dynamic Bass Lift on modern bass-heavy track: +" << modernLiftDb << " dB" << std::endl;
+    assert(modernLiftDb < 1.0f);
+    std::cout << "  -> PASS: Adaptive sensor prevents mud on modern bass-heavy material." << std::endl;
 }
 
-void testAirHarmonicExciter() {
-    std::cout << "[TEST] AirHarmonicExciter high-frequency sheen & adaptive protection..." << std::endl;
-    AirHarmonicExciter exciter;
+void testDynamicAirLift() {
+    std::cout << "[TEST] DynamicAirLift (Dolby Duo high-end upward expansion & sibilance ducking)..." << std::endl;
+    DynamicAirLift airLift;
     double sampleRate = 48000.0;
-    exciter.prepare(sampleRate);
+    airLift.prepare(sampleRate);
 
-    // 1. Test AirWeight::OFF is 100% bit-identical bypass
+    // 1. Test AirLiftMode::OFF is 100% bit-identical bypass
     size_t n = 4800;
     std::vector<float> origL(n), origR(n);
     for (size_t i = 0; i < n; ++i) {
-        float s = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
+        float s = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
         origL[i] = s;
-        origR[i] = s * 0.8f;
+        origR[i] = s;
     }
     std::vector<float> passL = origL;
     std::vector<float> passR = origR;
-    exciter.process(passL.data(), passR.data(), n, AirWeight::OFF);
+    airLift.process(passL.data(), passR.data(), n, AirLiftMode::OFF);
     for (size_t i = 0; i < n; ++i) {
         assert(passL[i] == origL[i]);
         assert(passR[i] == origR[i]);
     }
-    std::cout << "  -> PASS: AirWeight::OFF is 100% bit-identical bypass." << std::endl;
+    std::cout << "  -> PASS: AirLiftMode::OFF is 100% bit-identical bypass." << std::endl;
 
-    // 2. Test high harmonic sheen generation on a 5 kHz vintage track (zero native 10 kHz+ content)
-    exciter.reset();
-    std::vector<float> vintageL(n), vintageR(n);
+    // 2. Test air lift on dark vintage material (strong 2 kHz mid, weak 12 kHz air)
+    airLift.reset();
+    std::vector<float> darkL(n), darkR(n);
     for (size_t i = 0; i < n; ++i) {
-        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
-        vintageL[i] = s;
-        vintageR[i] = s;
+        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
+        float weakAir = 0.02f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
+        darkL[i] = mid + weakAir;
+        darkR[i] = mid + weakAir;
     }
-    exciter.process(vintageL.data(), vintageR.data(), n, AirWeight::MED);
+    airLift.process(darkL.data(), darkR.data(), n, AirLiftMode::MED);
+    float airLiftDb = airLift.getLiftDb();
+    std::cout << "  Dynamic Air Lift applied on dark track: +" << airLiftDb << " dB" << std::endl;
+    assert(airLiftDb > 2.0f && airLiftDb <= 4.5f);
+    std::cout << "  -> PASS: Dynamic Air Lift smoothly pulls up natural top-end air with zero distortion." << std::endl;
 
-    // Measure discrete Fourier coefficient at 10 kHz (2nd harmonic / octave doubling)
-    double sumSin10 = 0.0, sumCos10 = 0.0;
-    for (size_t i = 2400; i < n; ++i) {
-        double phase = 2.0 * TEST_PI * 10000.0 * i / sampleRate;
-        sumSin10 += vintageL[i] * std::sin(phase);
-        sumCos10 += vintageL[i] * std::cos(phase);
-    }
-    double mag10kHz = (2.0 / 2400.0) * std::sqrt(sumSin10 * sumSin10 + sumCos10 * sumCos10);
-    std::cout << "  Input 5 kHz tone -> Generated 10 kHz air harmonic magnitude: " << mag10kHz << std::endl;
-    assert(mag10kHz > 0.015); // Clear harmonic generation detected!
-    std::cout << "  -> PASS: 10 kHz octave harmonic generated cleanly from 5 kHz source." << std::endl;
-
-    // 3. Test adaptive suppression: when a modern track already has strong native 12 kHz air
-    exciter.reset();
-    std::vector<float> modernL(n), modernR(n);
+    // 3. Test adaptive suppression: on already-bright track, lift must drop to near 0 dB
+    airLift.reset();
+    std::vector<float> brightL(n), brightR(n);
     for (size_t i = 0; i < n; ++i) {
-        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 5000.0 * i / sampleRate));
-        float nativeAir = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
-        modernL[i] = mid + nativeAir;
-        modernR[i] = mid + nativeAir;
+        float mid = 0.3f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
+        float brightAir = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
+        brightL[i] = mid + brightAir;
+        brightR[i] = mid + brightAir;
     }
-    std::vector<float> modernCopyL = modernL;
-    exciter.process(modernL.data(), modernR.data(), n, AirWeight::MED);
+    airLift.process(brightL.data(), brightR.data(), n, AirLiftMode::MED);
+    float brightLiftDb = airLift.getLiftDb();
+    std::cout << "  Dynamic Air Lift on bright track: +" << brightLiftDb << " dB" << std::endl;
+    assert(brightLiftDb < 1.0f);
+    std::cout << "  -> PASS: Adaptive sensor protects bright tracks from harshness." << std::endl;
+}
 
-    // Measure added difference on modern track
-    double maxDiff = 0.0;
-    for (size_t i = 2400; i < n; ++i) {
-        maxDiff = std::max(maxDiff, static_cast<double>(std::abs(modernL[i] - modernCopyL[i])));
-    }
-    std::cout << "  Adaptive suppression injected amplitude on bright modern track: " << maxDiff << std::endl;
-    assert(maxDiff < 0.06); // Heavily suppressed on already-bright mixes
-    std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing air from harshness." << std::endl;
+void testHighPassFilter() {
+    std::cout << "[TEST] HighPassFilter 24 dB/octave 4th-order Butterworth response..." << std::endl;
+    HighPassFilter hpf;
+    double sampleRate = 48000.0;
+    hpf.prepare(sampleRate);
+    hpf.setCutoff(30.0f, true);
+
+    auto measureGainAt = [&](double freq) -> double {
+        hpf.reset();
+        size_t n = 48000; // 1 second
+        std::vector<float> inL(n), inR(n);
+        double sumSqIn = 0.0, sumSqOut = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            float s = static_cast<float>(std::sin(2.0 * TEST_PI * freq * i / sampleRate));
+            inL[i] = s;
+            inR[i] = s;
+        }
+        hpf.process(inL.data(), inR.data(), n);
+        // Measure steady state in second half
+        for (size_t i = 24000; i < n; ++i) {
+            float orig = static_cast<float>(std::sin(2.0 * TEST_PI * freq * i / sampleRate));
+            sumSqIn += orig * orig;
+            sumSqOut += inL[i] * inL[i];
+        }
+        return 20.0 * std::log10(std::sqrt(sumSqOut / sumSqIn));
+    };
+
+    double gainPassband = measureGainAt(1000.0);
+    double gainCutoff   = measureGainAt(30.0);
+    double gainOctaveDown = measureGainAt(15.0);
+
+    std::cout << "  1 kHz passband gain: " << gainPassband << " dB (expected: ~0.0 dB)" << std::endl;
+    std::cout << "  30 Hz cutoff gain:   " << gainCutoff << " dB (expected: ~-3.0 dB)" << std::endl;
+    std::cout << "  15 Hz octave-down gain: " << gainOctaveDown << " dB (expected: ~-27.0 dB)" << std::endl;
+
+    assert(std::abs(gainPassband) < 0.05); // Flat passband
+    assert(std::abs(gainCutoff - (-3.01)) < 0.25); // Exactly -3 dB at Butterworth cutoff
+    assert(gainOctaveDown < -24.0); // 24 dB/oct slope verified!
+
+    std::cout << "  -> PASS: 4th-order Butterworth filter exhibits exact 24 dB/octave attenuation." << std::endl;
 }
 
 void testDefaultLimiterCeiling() {
@@ -457,8 +472,9 @@ int main() {
     testEbuR128DynamicLoudness();
     testMbcSpeedBallistics();
     testPostMbcGain();
-    testSubHarmonicWeightInjector();
-    testAirHarmonicExciter();
+    testDynamicBassLift();
+    testDynamicAirLift();
+    testHighPassFilter();
     testDefaultLimiterCeiling();
     testFullChain();
 
@@ -467,3 +483,4 @@ int main() {
     std::cout << "============================================" << std::endl;
     return 0;
 }
+

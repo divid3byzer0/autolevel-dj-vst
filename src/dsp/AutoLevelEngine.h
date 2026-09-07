@@ -2,14 +2,19 @@
 
 #include "LoudnessMeter.h"
 #include "Leveler.h"
-#include "SubHarmonicSynthesizer.h"
-#include "AirHarmonicExciter.h"
+#include "DynamicBassLift.h"
+#include "DynamicAirLift.h"
+#include "HighPassFilter.h"
 #include "MultibandCompressor.h"
 #include "SafetyLimiter.h"
 #include <atomic>
 #include <array>
 
 namespace autolevel::dsp {
+
+// Backward-compatible type aliases for existing codebase & tests
+using SubWeight = BassLiftMode;
+using AirWeight = AirLiftMode;
 
 struct EngineParameters {
     float targetLUFS = -9.0f;
@@ -20,10 +25,15 @@ struct EngineParameters {
     float toneSlopeDbPerOctave = -2.0f; // -6.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
+    BassLiftMode bassLift = BassLiftMode::OFF;
+    AirLiftMode airLift = AirLiftMode::OFF;
+    // Backward compatibility aliases
     SubWeight subWeight = SubWeight::OFF;
     AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
+    float hpfCutoffHz = 30.0f;      // 20 to 50 Hz low-cut filter
+    bool hpfEnabled = true;
     float ceilingDb = -0.3f;        // -0.3 dBFS default master ceiling
     bool bypass = false;
 };
@@ -41,12 +51,19 @@ struct EngineVisualState {
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
+    BassLiftMode activeBassLift = BassLiftMode::OFF;
+    float bassLiftDb = 0.0f;
+    AirLiftMode activeAirLift = AirLiftMode::OFF;
+    float airLiftDb = 0.0f;
+    // Compatibility fields for UI meters
     SubWeight activeSubWeight = SubWeight::OFF;
     float subInjectedLevel = 0.0f;
     AirWeight activeAirWeight = AirWeight::OFF;
     float airInjectedLevel = 0.0f;
     float activeToneSlope = -2.0f;
     float postMbcGainDb = 0.0f;
+    float hpfCutoffHz = 30.0f;
+    bool hpfEnabled = true;
 };
 
 class AutoLevelEngine {
@@ -57,9 +74,10 @@ public:
         m_sampleRate = sampleRate;
         m_loudnessMeter.prepare(sampleRate);
         m_leveler.prepare(sampleRate);
-        m_subHarmonics.prepare(sampleRate);
-        m_airExciter.prepare(sampleRate);
+        m_bassLift.prepare(sampleRate);
+        m_airLift.prepare(sampleRate);
         m_mbc.prepare(sampleRate);
+        m_hpf.prepare(sampleRate);
         m_limiter.prepare(sampleRate);
         reset();
     }
@@ -67,16 +85,17 @@ public:
     void reset() {
         m_loudnessMeter.reset();
         m_leveler.reset();
-        m_subHarmonics.reset();
-        m_airExciter.reset();
+        m_bassLift.reset();
+        m_airLift.reset();
         m_mbc.reset();
+        m_hpf.reset();
         m_limiter.reset();
         m_outPeakLinL = 0.0f;
         m_outPeakLinR = 0.0f;
     }
 
     /**
-     * Exact chain: AGC -> Sub-Harmonics -> Air Exciter -> Multiband Compressor (MBC) -> Post-Gain -> Limiter
+     * Exact chain: AGC -> Bass Lift -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         if (params.bypass || numSamples == 0) {
@@ -101,11 +120,13 @@ public:
         // 3. Stage 1: AGC Makeup Gain applied to audio
         m_leveler.processBlock(left, right, numSamples);
 
-        // 3.5. Stage 1.5: Sub-Harmonic Weight Injector (clean mono sub-octave)
-        m_subHarmonics.process(left, right, numSamples, params.subWeight);
+        // 3.5. Stage 1.5: Dynamic Bass Lift (< 100 Hz, 100% distortion-free)
+        BassLiftMode effBass = (params.bassLift != BassLiftMode::OFF) ? params.bassLift : params.subWeight;
+        m_bassLift.process(left, right, numSamples, effBass);
 
-        // 3.6. Stage 1.6: High-Frequency Air Exciter (silky top-end sheen)
-        m_airExciter.process(left, right, numSamples, params.airWeight);
+        // 3.6. Stage 1.6: Dynamic Air Lift (> 9.5 kHz, 100% distortion-free)
+        AirLiftMode effAir = (params.airLift != AirLiftMode::OFF) ? params.airLift : params.airWeight;
+        m_airLift.process(left, right, numSamples, effAir);
 
         // 4. Stage 2: 6-band Multiband Dynamic Tone Shaper (thresholds linked to tone curve & profile)
         MBCParams mbcParams;
@@ -125,6 +146,11 @@ public:
                 right[s] *= postGainLin;
             }
         }
+
+        // 5.5. Stage 3.5: 4th-Order Butterworth High-Pass Filter (Low Cut 20-50 Hz)
+        // Cleanly strips inaudible subsonic rumble right before the safety limiter
+        m_hpf.setCutoff(params.hpfCutoffHz, params.hpfEnabled);
+        m_hpf.process(left, right, numSamples);
 
         // 6. Stage 4: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
         m_limiter.setCeilingDb(params.ceilingDb);
@@ -156,12 +182,19 @@ public:
         m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         m_visualState.activeProfile = params.targetProfile;
         m_visualState.activeMbcSpeed = params.mbcSpeed;
-        m_visualState.activeSubWeight = params.subWeight;
-        m_visualState.subInjectedLevel = m_subHarmonics.getInjectedLevel();
-        m_visualState.activeAirWeight = params.airWeight;
-        m_visualState.airInjectedLevel = m_airExciter.getInjectedLevel();
+        m_visualState.activeBassLift = effBass;
+        m_visualState.bassLiftDb = m_bassLift.getLiftDb();
+        m_visualState.activeAirLift = effAir;
+        m_visualState.airLiftDb = m_airLift.getLiftDb();
+        // UI compatibility
+        m_visualState.activeSubWeight = effBass;
+        m_visualState.subInjectedLevel = m_bassLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
+        m_visualState.activeAirWeight = effAir;
+        m_visualState.airInjectedLevel = m_airLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
         m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
         m_visualState.postMbcGainDb = params.postMbcGainDb;
+        m_visualState.hpfCutoffHz = m_hpf.getCutoffHz();
+        m_visualState.hpfEnabled = m_hpf.isEnabled();
     }
 
     EngineVisualState getVisualState() const noexcept {
@@ -172,9 +205,10 @@ private:
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
-    SubHarmonicSynthesizer m_subHarmonics;
-    AirHarmonicExciter m_airExciter;
+    DynamicBassLift m_bassLift;
+    DynamicAirLift m_airLift;
     MultibandCompressor m_mbc;
+    HighPassFilter m_hpf;
     SafetyLimiter m_limiter;
 
     float m_outPeakLinL = 0.0f;

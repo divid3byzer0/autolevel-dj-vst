@@ -1,6 +1,26 @@
 #include "PluginEditor.h"
 
 //==============================================================================
+// MainContentComponent Implementation (Proportional Resizing Canvas)
+//==============================================================================
+
+void MainContentComponent::paint(juce::Graphics& g) {
+    m_owner.paintContent(g);
+}
+
+void MainContentComponent::resized() {
+    m_owner.layoutContent();
+}
+
+void MainContentComponent::mouseDown(const juce::MouseEvent& e) {
+    m_owner.contentMouseDown(e);
+}
+
+void MainContentComponent::mouseMove(const juce::MouseEvent& e) {
+    m_owner.contentMouseMove(e);
+}
+
+//==============================================================================
 // ModernHardwareLookAndFeel Implementation
 //==============================================================================
 
@@ -455,44 +475,51 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     : AudioProcessorEditor(&p), m_processor(p)
 {
     setLookAndFeel(&m_lookAndFeel);
+    m_content.setLookAndFeel(&m_lookAndFeel);
+    addAndMakeVisible(m_content);
+
+    setResizable(true, true);
+    setResizeLimits(630, 495, 1680, 1320);
+    getConstrainer()->setFixedAspectRatio(840.0 / 660.0);
     setSize(840, 660);
 
     // Setup Visualizers
-    addAndMakeVisible(m_toneVisualizer);
-    addAndMakeVisible(m_meterRack);
+    m_content.addAndMakeVisible(m_toneVisualizer);
+    m_content.addAndMakeVisible(m_meterRack);
 
     // Row 1: Primary Knobs
     setupRotary(m_targetLufsSlider, m_targetLufsLabel, "TARGET LUFS", " LUFS", juce::Colour(0xff00e676));
     setupRotary(m_compressionSlider, m_compressionLabel, "COMPRESSION", "x", juce::Colour(0xff00e5ff));
     setupRotary(m_levelResponseSlider, m_levelResponseLabel, "LEVEL RESPONSE", "", juce::Colour(0xff00e5ff));
     setupRotary(m_toneSlopeSlider, m_toneSlopeLabel, "TONE SLOPE", " dB/oct", juce::Colour(0xffffb300));
+    setupRotary(m_ceilingSlider, m_ceilingLabel, "LIMITER CEILING", " dBFS", juce::Colour(0xffff3366));
 
-    // Row 2: Secondary Knobs (including Post-MBC Gain)
+    // Row 2: Secondary Knobs
     setupRotary(m_maxBoostSlider, m_maxBoostLabel, "MAX BOOST", " dB", juce::Colour(0xff00e5ff));
     setupRotary(m_maxCutSlider, m_maxCutLabel, "MAX CUT", " dB", juce::Colour(0xffffb300));
     setupRotary(m_postGainSlider, m_postGainLabel, "POST GAIN", " dB", juce::Colour(0xff00e5ff));
-    setupRotary(m_ceilingSlider, m_ceilingLabel, "LIMITER CEILING", " dBFS", juce::Colour(0xffff3366));
+    setupRotary(m_hpfSlider, m_hpfLabel, "LOW CUT", " Hz", juce::Colour(0xffffb300));
 
     // Breakdown freeze (located in Card 2 - AGC Gain Correction)
     m_freezeBreakdownsButton.setButtonText("Breakdown Freeze");
     m_freezeBreakdownsButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffffb300));
-    addAndMakeVisible(m_freezeBreakdownsButton);
+    m_content.addAndMakeVisible(m_freezeBreakdownsButton);
 
     // Bypass Button
     m_bypassButton.setButtonText("BYPASS");
     m_bypassButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffff3366));
-    addAndMakeVisible(m_bypassButton);
+    m_content.addAndMakeVisible(m_bypassButton);
 
     // Reset button
     m_resetButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff181d26));
     m_resetButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff00e5ff));
     m_resetButton.onClick = [this]() { m_processor.resetIntegration(); };
-    addAndMakeVisible(m_resetButton);
+    m_content.addAndMakeVisible(m_resetButton);
 
     // Hidden APVTS-bound ComboBox for Profile
     m_profileBox.addItem("Pink Noise (Linear)", 1);
     m_profileBox.addItem("Modern Mix (Contoured)", 2);
-    addChildComponent(m_profileBox);
+    m_content.addChildComponent(m_profileBox);
 
     // Tactile Profile Segmented Buttons
     m_pinkNoiseBtn.setButtonText("PINK NOISE");
@@ -500,64 +527,64 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_pinkNoiseBtn.onClick = [this]() {
         m_profileBox.setSelectedItemIndex(0, juce::sendNotificationSync);
     };
-    addAndMakeVisible(m_pinkNoiseBtn);
+    m_content.addAndMakeVisible(m_pinkNoiseBtn);
 
     m_modernMixBtn.setButtonText("MODERN MIX");
     m_modernMixBtn.setClickingTogglesState(false);
     m_modernMixBtn.onClick = [this]() {
         m_profileBox.setSelectedItemIndex(1, juce::sendNotificationSync);
     };
-    addAndMakeVisible(m_modernMixBtn);
+    m_content.addAndMakeVisible(m_modernMixBtn);
 
     m_profileDescLabel.setText("Club Contour: -2.5dB @ 250Hz | -2.0dB @ 5kHz", juce::dontSendNotification);
     m_profileDescLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_profileDescLabel.setJustificationType(juce::Justification::centred);
     m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
-    addAndMakeVisible(m_profileDescLabel);
+    m_content.addAndMakeVisible(m_profileDescLabel);
 
     // MBC Speed Controls (Segmented header buttons)
     m_mbcSpeedBox.addItem("Slow", 1);
     m_mbcSpeedBox.addItem("Normal", 2);
     m_mbcSpeedBox.addItem("Fast", 3);
-    addChildComponent(m_mbcSpeedBox);
+    m_content.addChildComponent(m_mbcSpeedBox);
 
     m_mbcSpeedLabel.setText("SPEED:", juce::dontSendNotification);
     m_mbcSpeedLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_mbcSpeedLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_mbcSpeedLabel.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(m_mbcSpeedLabel);
+    m_content.addAndMakeVisible(m_mbcSpeedLabel);
 
     auto setupSpeedBtn = [this](juce::TextButton& btn, int index) {
         btn.setClickingTogglesState(false);
         btn.onClick = [this, index]() {
             m_mbcSpeedBox.setSelectedItemIndex(index, juce::sendNotificationSync);
         };
-        addAndMakeVisible(btn);
+        m_content.addAndMakeVisible(btn);
     };
 
     setupSpeedBtn(m_speedSlowBtn, 0);
     setupSpeedBtn(m_speedNormalBtn, 1);
     setupSpeedBtn(m_speedFastBtn, 2);
 
-    // Sub Weight Controls (Segmented header buttons in Card 4)
+    // Dynamic Bass Lift Controls (Segmented header buttons in Card 4)
     m_subWeightBox.addItem("Off", 1);
     m_subWeightBox.addItem("Low", 2);
     m_subWeightBox.addItem("Medium", 3);
     m_subWeightBox.addItem("High", 4);
-    addChildComponent(m_subWeightBox);
+    m_content.addChildComponent(m_subWeightBox);
 
-    m_subWeightLabel.setText("SUB:", juce::dontSendNotification);
+    m_subWeightLabel.setText("BASS:", juce::dontSendNotification);
     m_subWeightLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_subWeightLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_subWeightLabel.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(m_subWeightLabel);
+    m_content.addAndMakeVisible(m_subWeightLabel);
 
     auto setupSubWeightBtn = [this](juce::TextButton& btn, int index) {
         btn.setClickingTogglesState(false);
         btn.onClick = [this, index]() {
             m_subWeightBox.setSelectedItemIndex(index, juce::sendNotificationSync);
         };
-        addAndMakeVisible(btn);
+        m_content.addAndMakeVisible(btn);
     };
 
     setupSubWeightBtn(m_subWeightOffBtn, 0);
@@ -565,25 +592,25 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupSubWeightBtn(m_subWeightMedBtn, 2);
     setupSubWeightBtn(m_subWeightHighBtn, 3);
 
-    // High-Frequency Air Exciter Controls (Segmented header buttons in Card 4)
+    // Dynamic Air Lift Controls (Segmented header buttons in Card 4)
     m_airExciterBox.addItem("Off", 1);
     m_airExciterBox.addItem("Low", 2);
     m_airExciterBox.addItem("Medium", 3);
     m_airExciterBox.addItem("High", 4);
-    addChildComponent(m_airExciterBox);
+    m_content.addChildComponent(m_airExciterBox);
 
     m_airExciterLabel.setText("AIR:", juce::dontSendNotification);
     m_airExciterLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_airExciterLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_airExciterLabel.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(m_airExciterLabel);
+    m_content.addAndMakeVisible(m_airExciterLabel);
 
     auto setupAirExciterBtn = [this](juce::TextButton& btn, int index) {
         btn.setClickingTogglesState(false);
         btn.onClick = [this, index]() {
             m_airExciterBox.setSelectedItemIndex(index, juce::sendNotificationSync);
         };
-        addAndMakeVisible(btn);
+        m_content.addAndMakeVisible(btn);
     };
 
     setupAirExciterBtn(m_airExciterOffBtn, 0);
@@ -615,6 +642,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_MAX_CUT, m_maxCutSlider);
     m_postGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_POST_MBC_GAIN, m_postGainSlider);
+    m_hpfAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_HPF_FREQ, m_hpfSlider);
     m_ceilingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_CEILING_DB, m_ceilingSlider);
     m_freezeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -627,6 +656,7 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
 
 AutoLevelDJAudioProcessorEditor::~AutoLevelDJAudioProcessorEditor() {
     stopTimer();
+    m_content.setLookAndFeel(nullptr);
     setLookAndFeel(nullptr);
 }
 
@@ -638,13 +668,13 @@ void AutoLevelDJAudioProcessorEditor::setupRotary(juce::Slider& slider, juce::La
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 22);
     slider.setTextValueSuffix(suffix);
     slider.setColour(juce::Slider::rotarySliderFillColourId, accentCol);
-    addAndMakeVisible(slider);
+    m_content.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::FontOptions(11.0f, juce::Font::bold));
     label.setJustificationType(juce::Justification::centred);
     label.setColour(juce::Label::textColourId, juce::Colour(0xff9aa5b4));
-    addAndMakeVisible(label);
+    m_content.addAndMakeVisible(label);
 }
 
 void AutoLevelDJAudioProcessorEditor::timerCallback() {
@@ -694,22 +724,27 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
     m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeSubWeight, m_latestState.activeAirWeight);
 
-    repaint();
+    m_content.repaint();
 }
 
 void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
+    // Backdrop behind content container
+    g.fillAll(juce::Colour(0xff0a0c10));
+}
+
+void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     // Obsidian dark chassis backdrop
     g.fillAll(juce::Colour(0xff0a0c10));
 
     // Top Header Bar
-    juce::Rectangle<int> headerArea(0, 0, getWidth(), 54);
+    juce::Rectangle<int> headerArea(0, 0, 840, 54);
     juce::ColourGradient headerGrad(juce::Colour(0xff161a24), 0.0f, 0.0f,
                                     juce::Colour(0xff0e1118), 0.0f, 54.0f, false);
     g.setGradientFill(headerGrad);
     g.fillRect(headerArea);
 
     g.setColour(juce::Colour(0xff222938));
-    g.drawHorizontalLine(54, 0.0f, static_cast<float>(getWidth()));
+    g.drawHorizontalLine(54, 0.0f, 840.0f);
 
     // Title & Logo
     g.setColour(juce::Colour(0xff00e5ff));
@@ -838,8 +873,8 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     juce::Rectangle<int> mbcCard(20, 236, 800, 158);
     drawCard(mbcCard, "TONE SHAPER");
 
-    // 1. Real-time Sub-Harmonic Injection Activity Meter in Card 4 header
-    float subMeterX = 300.0f;
+    // 1. Real-time Dynamic Bass Lift Activity Meter in Card 4 header
+    float subMeterX = 308.0f;
     float subMeterY = 244.0f;
     float subMeterW = 46.0f;
     float subMeterH = 16.0f;
@@ -857,7 +892,7 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.drawText("OFF", subTrough, juce::Justification::centred);
     } else {
         constexpr int NUM_LEDS = 4;
-        float normLevel = std::clamp(m_latestState.subInjectedLevel / 0.30f, 0.0f, 1.0f);
+        float normLevel = std::clamp(m_latestState.bassLiftDb / 6.5f, 0.0f, 1.0f);
         int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
 
         float ledW = 8.0f;
@@ -881,7 +916,7 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         }
     }
 
-    // 2. Real-time High-Frequency Air Exciter Activity Meter in Card 4 header
+    // 2. Real-time Dynamic Air Lift Activity Meter in Card 4 header
     float airMeterX = 530.0f;
     float airMeterY = 244.0f;
     float airMeterW = 46.0f;
@@ -900,7 +935,7 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.drawText("OFF", airTrough, juce::Justification::centred);
     } else {
         constexpr int NUM_LEDS = 4;
-        float normLevel = std::clamp(m_latestState.airInjectedLevel / 0.25f, 0.0f, 1.0f);
+        float normLevel = std::clamp(m_latestState.airLiftDb / 6.5f, 0.0f, 1.0f);
         int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
 
         float ledW = 8.0f;
@@ -927,6 +962,28 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     // Card 5: Parameters Panel (Bottom Full Width)
     juce::Rectangle<int> ctrlCard(20, 404, 800, 244);
     drawCard(ctrlCard, "MASTER PROCESSOR CONTROLS");
+
+    // Safety Limiter Spec Badge in Row 2 Col 4
+    juce::Rectangle<float> ceilBadge(576.0f, 542.0f, 96.0f, 62.0f);
+    g.setColour(juce::Colour(0xff0e1219));
+    g.fillRoundedRectangle(ceilBadge, 4.0f);
+    g.setColour(juce::Colour(0xff1d2534));
+    g.drawRoundedRectangle(ceilBadge, 4.0f, 1.0f);
+
+    g.setColour(juce::Colour(0xffff3366));
+    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    g.drawText("SAFETY LIMITER", static_cast<int>(ceilBadge.getX()), static_cast<int>(ceilBadge.getY() + 6.0f),
+               static_cast<int>(ceilBadge.getWidth()), 14, juce::Justification::centred);
+
+    g.setColour(juce::Colour(0xff8a96a7));
+    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+    g.drawText("24 dB/oct Sub Cut", static_cast<int>(ceilBadge.getX()), static_cast<int>(ceilBadge.getY() + 24.0f),
+               static_cast<int>(ceilBadge.getWidth()), 14, juce::Justification::centred);
+
+    g.setColour(juce::Colour(0xff00e5ff));
+    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+    g.drawText("Clip-Free Output", static_cast<int>(ceilBadge.getX()), static_cast<int>(ceilBadge.getY() + 40.0f),
+               static_cast<int>(ceilBadge.getWidth()), 14, juce::Justification::centred);
 
     // Master Output Peak & Limiter Gain Reduction Meter (Right of Card 5)
     float meterBoxX = 726.0f;
@@ -1089,28 +1146,35 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     g.drawText(peakStr, peakBadge, juce::Justification::centred);
 }
 
-void AutoLevelDJAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
+void AutoLevelDJAudioProcessorEditor::contentMouseDown(const juce::MouseEvent& e) {
     // Click on OUT / GR meter panel resets the peak-held maximum gain reduction
     juce::Rectangle<int> grClickArea(726, 418, 84, 220);
     if (grClickArea.contains(e.getPosition())) {
         m_maxHeldLimiterGrDb = m_latestState.limiterGainReductionDb; // Reset peak hold to current reduction
-        repaint();
+        m_content.repaint();
     }
 }
 
-void AutoLevelDJAudioProcessorEditor::mouseMove(const juce::MouseEvent& e) {
+void AutoLevelDJAudioProcessorEditor::contentMouseMove(const juce::MouseEvent& e) {
     juce::Rectangle<int> grBadgeArea(732, 438, 72, 18);
     if (grBadgeArea.contains(e.getPosition())) {
-        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        m_content.setMouseCursor(juce::MouseCursor::PointingHandCursor);
     } else {
-        setMouseCursor(juce::MouseCursor::NormalCursor);
+        m_content.setMouseCursor(juce::MouseCursor::NormalCursor);
     }
 }
 
 void AutoLevelDJAudioProcessorEditor::resized() {
+    // Proportional Aspect-Ratio Vector Scaling (locked 840 x 660 aspect ratio)
+    float scale = static_cast<float>(getWidth()) / 840.0f;
+    m_content.setBounds(0, 0, 840, 660);
+    m_content.setTransform(juce::AffineTransform::scale(scale));
+}
+
+void AutoLevelDJAudioProcessorEditor::layoutContent() {
     // Header Buttons
-    m_bypassButton.setBounds(getWidth() - 116, 13, 96, 28);
-    m_resetButton.setBounds(getWidth() - 326, 13, 200, 28);
+    m_bypassButton.setBounds(840 - 116, 13, 96, 28);
+    m_resetButton.setBounds(840 - 326, 13, 200, 28);
 
     // Profile Card Controls
     m_pinkNoiseBtn.setBounds(530, 92, 136, 26);
@@ -1123,14 +1187,14 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
     m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
 
-    // Sub Weight Controls inside Card 4 header (x = 126 to 346)
-    m_subWeightLabel.setBounds(126, 242, 30, 20);
-    m_subWeightOffBtn.setBounds(158, 242, 32, 20);
-    m_subWeightLowBtn.setBounds(192, 242, 32, 20);
-    m_subWeightMedBtn.setBounds(226, 242, 32, 20);
-    m_subWeightHighBtn.setBounds(260, 242, 36, 20);
+    // Dynamic Bass Lift Controls inside Card 4 header (x = 126 to 346)
+    m_subWeightLabel.setBounds(126, 242, 34, 20);
+    m_subWeightOffBtn.setBounds(162, 242, 32, 20);
+    m_subWeightLowBtn.setBounds(196, 242, 32, 20);
+    m_subWeightMedBtn.setBounds(230, 242, 32, 20);
+    m_subWeightHighBtn.setBounds(264, 242, 36, 20);
 
-    // Air Exciter Controls inside Card 4 header (x = 358 to 576)
+    // Dynamic Air Lift Controls inside Card 4 header (x = 358 to 576)
     m_airExciterLabel.setBounds(358, 242, 28, 20);
     m_airExciterOffBtn.setBounds(388, 242, 32, 20);
     m_airExciterLowBtn.setBounds(422, 242, 32, 20);
@@ -1146,37 +1210,39 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     // 6-Band Meter Rack inside MBC Card
     m_meterRack.setBounds(26, 266, 788, 120);
 
-    // Controls Row 1 (Primary Master Knobs)
-    int row1Y = 424;
-    int knobW = 100;
-    int knobH = 88;
-    int colSpacing = 195;
-    int startX = 35;
+    // Controls Row 1 & Row 2 (5 Columns in Card 5)
+    int row1Y = 422;
+    int row2Y = 536;
+    int knobW = 92;
+    int knobH = 82;
+    int colSpacing = 138;
+    int startX = 32;
 
+    // Col 0: TARGET LUFS / MAX BOOST
     m_targetLufsLabel.setBounds(startX, row1Y, knobW, 14);
     m_targetLufsSlider.setBounds(startX, row1Y + 14, knobW, knobH);
-
-    m_compressionLabel.setBounds(startX + colSpacing, row1Y, knobW, 14);
-    m_compressionSlider.setBounds(startX + colSpacing, row1Y + 14, knobW, knobH);
-
-    m_levelResponseLabel.setBounds(startX + 2 * colSpacing, row1Y, knobW, 14);
-    m_levelResponseSlider.setBounds(startX + 2 * colSpacing, row1Y + 14, knobW, knobH);
-
-    m_toneSlopeLabel.setBounds(startX + 3 * colSpacing, row1Y, knobW, 14);
-    m_toneSlopeSlider.setBounds(startX + 3 * colSpacing, row1Y + 14, knobW, knobH);
-
-    // Controls Row 2 (Secondary Knobs: Boost, Cut, Post-MBC Gain, Limiter Ceiling)
-    int row2Y = 536;
-
     m_maxBoostLabel.setBounds(startX, row2Y, knobW, 14);
     m_maxBoostSlider.setBounds(startX, row2Y + 14, knobW, knobH);
 
+    // Col 1: COMPRESSION / MAX CUT
+    m_compressionLabel.setBounds(startX + colSpacing, row1Y, knobW, 14);
+    m_compressionSlider.setBounds(startX + colSpacing, row1Y + 14, knobW, knobH);
     m_maxCutLabel.setBounds(startX + colSpacing, row2Y, knobW, 14);
     m_maxCutSlider.setBounds(startX + colSpacing, row2Y + 14, knobW, knobH);
 
+    // Col 2: LEVEL RESPONSE / POST GAIN
+    m_levelResponseLabel.setBounds(startX + 2 * colSpacing, row1Y, knobW, 14);
+    m_levelResponseSlider.setBounds(startX + 2 * colSpacing, row1Y + 14, knobW, knobH);
     m_postGainLabel.setBounds(startX + 2 * colSpacing, row2Y, knobW, 14);
     m_postGainSlider.setBounds(startX + 2 * colSpacing, row2Y + 14, knobW, knobH);
 
-    m_ceilingLabel.setBounds(startX + 3 * colSpacing, row2Y, knobW, 14);
-    m_ceilingSlider.setBounds(startX + 3 * colSpacing, row2Y + 14, knobW, knobH);
+    // Col 3: TONE SLOPE / LOW CUT (HPF 20 - 50 Hz)
+    m_toneSlopeLabel.setBounds(startX + 3 * colSpacing, row1Y, knobW, 14);
+    m_toneSlopeSlider.setBounds(startX + 3 * colSpacing, row1Y + 14, knobW, knobH);
+    m_hpfLabel.setBounds(startX + 3 * colSpacing, row2Y, knobW, 14);
+    m_hpfSlider.setBounds(startX + 3 * colSpacing, row2Y + 14, knobW, knobH);
+
+    // Col 4: LIMITER CEILING (Row 1)
+    m_ceilingLabel.setBounds(startX + 4 * colSpacing, row1Y, knobW, 14);
+    m_ceilingSlider.setBounds(startX + 4 * colSpacing, row1Y + 14, knobW, knobH);
 }

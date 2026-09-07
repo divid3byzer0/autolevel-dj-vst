@@ -75,9 +75,22 @@ private:
     autolevel::dsp::AirWeight m_airWeight = autolevel::dsp::AirWeight::OFF;
 };
 
+class AutoLevelDJAudioProcessorEditor;
+
+class MainContentComponent : public juce::Component {
+public:
+    explicit MainContentComponent(AutoLevelDJAudioProcessorEditor& owner) : m_owner(owner) {}
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
+private:
+    AutoLevelDJAudioProcessorEditor& m_owner;
+};
+
 //==============================================================================
 /**
- * Master Editor for AutoLevel DJ.
+ * Master Editor for AutoLevel DJ with Proportional Aspect-Ratio Scaling.
  */
 class AutoLevelDJAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer {
 public:
@@ -86,8 +99,12 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
-    void mouseDown(const juce::MouseEvent& e) override;
-    void mouseMove(const juce::MouseEvent& e) override;
+
+    friend class MainContentComponent;
+    void paintContent(juce::Graphics&);
+    void layoutContent();
+    void contentMouseDown(const juce::MouseEvent& e);
+    void contentMouseMove(const juce::MouseEvent& e);
 
 private:
     void timerCallback() override;
@@ -96,6 +113,9 @@ private:
 
     AutoLevelDJAudioProcessor& m_processor;
     ModernHardwareLookAndFeel m_lookAndFeel;
+
+    // Fixed aspect ratio canvas container
+    MainContentComponent m_content{*this};
 
     // Visualizers
     ToneCurveVisualizer m_toneVisualizer;
@@ -133,7 +153,7 @@ private:
     juce::TextButton m_speedNormalBtn{"NORMAL"};
     juce::TextButton m_speedFastBtn{"FAST"};
 
-    // Sub-Harmonic Weight Injector Switcher (Off, Low, Med, High)
+    // Dynamic Bass Lift Switcher (Off, Low, Med, High)
     juce::ComboBox m_subWeightBox; // APVTS bound
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_subWeightAttachment;
     juce::Label m_subWeightLabel;
@@ -142,7 +162,7 @@ private:
     juce::TextButton m_subWeightMedBtn{"MED"};
     juce::TextButton m_subWeightHighBtn{"HIGH"};
 
-    // High-Frequency Air Exciter Switcher (Off, Low, Med, High)
+    // Dynamic Air Lift Switcher (Off, Low, Med, High)
     juce::ComboBox m_airExciterBox; // APVTS bound
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_airExciterAttachment;
     juce::Label m_airExciterLabel;
@@ -155,6 +175,11 @@ private:
     juce::Slider m_postGainSlider;
     juce::Label m_postGainLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_postGainAttachment;
+
+    // High-Pass Filter (Low Cut 20 - 50 Hz, 24 dB/oct)
+    juce::Slider m_hpfSlider;
+    juce::Label m_hpfLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_hpfAttachment;
 
     juce::Slider m_maxBoostSlider;
     juce::Label m_maxBoostLabel;

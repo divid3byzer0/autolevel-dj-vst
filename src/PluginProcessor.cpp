@@ -78,6 +78,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ID_HPF_FREQ, 1},
+        "Low Cut",
+        juce::NormalisableRange<float>(20.0f, 50.0f, 0.5f),
+        30.0f, // Default: 30 Hz (24 dB/oct Butterworth)
+        juce::AudioParameterFloatAttributes().withLabel("Hz")));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_CEILING_DB, 1},
         "Limiter Ceiling",
         juce::NormalisableRange<float>(-3.0f, 0.0f, 0.1f),
@@ -114,6 +121,7 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_subWeightParam = m_apvts.getRawParameterValue(ID_SUB_WEIGHT);
     m_airExciterParam = m_apvts.getRawParameterValue(ID_AIR_EXCITER);
     m_postMbcGainParam = m_apvts.getRawParameterValue(ID_POST_MBC_GAIN);
+    m_hpfFreqParam = m_apvts.getRawParameterValue(ID_HPF_FREQ);
     m_ceilingDbParam = m_apvts.getRawParameterValue(ID_CEILING_DB);
     m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
     m_bypassParam = m_apvts.getRawParameterValue(ID_BYPASS);
@@ -191,6 +199,8 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     else params.airWeight = autolevel::dsp::AirWeight::OFF;
 
     params.postMbcGainDb = m_postMbcGainParam ? m_postMbcGainParam->load() : 0.0f;
+    params.hpfCutoffHz = m_hpfFreqParam ? m_hpfFreqParam->load() : 30.0f;
+    params.hpfEnabled = (params.hpfCutoffHz >= 20.0f);
     params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -0.3f;
     params.freezeBreakdowns = m_freezeBreakdownsParam ? (m_freezeBreakdownsParam->load() > 0.5f) : true;
     params.bypass = m_bypassParam ? (m_bypassParam->load() > 0.5f) : false;

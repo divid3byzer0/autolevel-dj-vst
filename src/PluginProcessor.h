@@ -53,6 +53,7 @@ public:
     static constexpr const char* ID_SUB_WEIGHT = "sub_weight";
     static constexpr const char* ID_AIR_EXCITER = "air_exciter";
     static constexpr const char* ID_POST_MBC_GAIN = "post_mbc_gain";
+    static constexpr const char* ID_HPF_FREQ = "hpf_freq";
     static constexpr const char* ID_CEILING_DB = "ceiling_db";
     static constexpr const char* ID_FREEZE_BREAKDOWNS = "freeze_breakdowns";
     static constexpr const char* ID_BYPASS = "bypass";
@@ -73,6 +74,7 @@ private:
     std::atomic<float>* m_subWeightParam = nullptr;
     std::atomic<float>* m_airExciterParam = nullptr;
     std::atomic<float>* m_postMbcGainParam = nullptr;
+    std::atomic<float>* m_hpfFreqParam = nullptr;
     std::atomic<float>* m_ceilingDbParam = nullptr;
     std::atomic<float>* m_freezeBreakdownsParam = nullptr;
     std::atomic<float>* m_bypassParam = nullptr;
