@@ -56,3 +56,17 @@ target_link_libraries(AutoLevelDJ PRIVATE
 # Offline DSP unit test executable
 add_executable(dsp_test tests/dsp_test.cpp)
 target_include_directories(dsp_test PRIVATE src)
+
+# Convenience target to install VST3 and AU into user's audio plugin folder
+add_custom_target(install_plugins
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/VST3"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/Components"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
+        "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/AutoLevel DJ.vst3"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/AU/AutoLevel DJ.component"
+        "$ENV{HOME}/Library/Audio/Plug-Ins/Components/AutoLevel DJ.component"
+    COMMENT "Installing VST3 and AU plugins to ~/Library/Audio/Plug-Ins..."
+    VERBATIM
+)
