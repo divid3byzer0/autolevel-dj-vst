@@ -1,0 +1,152 @@
+name: Build and Release AutoLevel DJ
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS (Apple Silicon / Universal)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure CMake
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build VST3, AU, Standalone and Test
+        run: cmake --build build --config Release
+
+      - name: Run DSP Unit Tests
+        run: ./build/dsp_test
+
+      - name: Package macOS Artifacts
+        run: |
+          mkdir -p package/macOS
+          cp -R "build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3" package/macOS/
+          cp -R "build/AutoLevelDJ_artefacts/Release/AU/AutoLevel DJ.component" package/macOS/
+          cp -R "build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.app" package/macOS/
+          cd package/macOS
+          zip -r "$GITHUB_WORKSPACE/autolevel-dj-macos.zip" .
+
+      - name: Upload macOS Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolevel-dj-macos
+          path: autolevel-dj-macos.zip
+
+  build-windows-x64:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (MSVC x64)
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build VST3, Standalone, and Test
+        run: cmake --build build --config Release --parallel
+
+      - name: Run DSP Unit Tests
+        run: .\build\Release\dsp_test.exe
+
+      - name: Package Windows x64 Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/windows-x64 | Out-Null
+          Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\VST3\AutoLevel DJ.vst3" -Destination package/windows-x64/
+          Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\Standalone\AutoLevel DJ.exe" -Destination package/windows-x64/
+          Compress-Archive -Path "package\windows-x64\*" -DestinationPath "autolevel-dj-windows-x64.zip"
+
+      - name: Upload Windows x64 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolevel-dj-windows-x64
+          path: autolevel-dj-windows-x64.zip
+
+  build-windows-x86:
+    name: Build Windows x86 (32-bit)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake (MSVC Win32)
+        run: cmake -B build -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build VST3, Standalone, and Test
+        run: cmake --build build --config Release --parallel
+
+      - name: Run DSP Unit Tests
+        run: .\build\Release\dsp_test.exe
+
+      - name: Package Windows x86 Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/windows-x86 | Out-Null
+          Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\VST3\AutoLevel DJ.vst3" -Destination package/windows-x86/
+          Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\Standalone\AutoLevel DJ.exe" -Destination package/windows-x86/
+          Compress-Archive -Path "package\windows-x86\*" -DestinationPath "autolevel-dj-windows-x86.zip"
+
+      - name: Upload Windows x86 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolevel-dj-windows-x86
+          path: autolevel-dj-windows-x86.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-windows-x64, build-windows-x86]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: autolevel-dj-macos
+
+      - name: Download Windows x64 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: autolevel-dj-windows-x64
+
+      - name: Download Windows x86 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: autolevel-dj-windows-x86
+
+      - name: Determine Release Tag
+        id: tag_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v1.0.0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_info.outputs.tag }}
+          name: AutoLevel DJ ${{ steps.tag_info.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            autolevel-dj-macos.zip
+            autolevel-dj-windows-x64.zip
+            autolevel-dj-windows-x86.zip
