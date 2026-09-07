@@ -84,7 +84,7 @@ AutoLevel DJ builds for macOS (optimized for Apple Silicon / M-series chips):
 * CMake (`brew install cmake`)
 * Ninja (`brew install ninja`)
 
-### Build Commands
+### Build Commands (macOS)
 
 ```bash
 # Clone the repository
@@ -101,10 +101,37 @@ cmake --build build --config Release
 ./build/dsp_test
 ```
 
+### Build Commands (Windows x64 & x86)
+
+Requirements: Visual Studio 2022 with C++ Desktop Development workload.
+
+```powershell
+# For 64-bit Windows (x64) - Standard for modern DAWs
+cmake -B build-x64 -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-x64 --config Release
+
+# For 32-bit Windows (x86) - Legacy hosts
+cmake -B build-x86 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-x86 --config Release
+
+# Run tests
+.\build-x64\Release\dsp_test.exe
+```
+
 Compiled plugins will be located in:
-* `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
-* `build/AutoLevelDJ_artefacts/Release/AU/AutoLevel DJ.component`
-* `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.app`
+* macOS:
+  * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
+  * `build/AutoLevelDJ_artefacts/Release/AU/AutoLevel DJ.component`
+  * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.app`
+* Windows:
+  * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
+  * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
+
+---
+
+## Pre-built Releases
+
+Pre-compiled binary packages for macOS and Windows are published under [GitHub Releases](https://github.com/divid3byzer0/autolevel-dj-vst/releases).
 
 ---
 
