@@ -29,7 +29,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::ParameterID{ID_LEVEL_RESPONSE, 1},
         "Level Response",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
-        0.25f,
+        0.85f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -172,7 +172,7 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     params.targetLUFS = m_targetLufsParam ? m_targetLufsParam->load() : -9.0f;
     params.maxBoostDb = m_maxBoostParam ? m_maxBoostParam->load() : 12.0f;
     params.maxCutDb = m_maxCutParam ? m_maxCutParam->load() : 12.0f;
-    params.levelResponse = m_levelResponseParam ? m_levelResponseParam->load() : 0.25f;
+    params.levelResponse = m_levelResponseParam ? m_levelResponseParam->load() : 0.85f;
     params.compressionAmount = m_compressionAmountParam ? m_compressionAmountParam->load() : 0.5f;
     params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -2.0f;
 

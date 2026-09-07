@@ -20,7 +20,7 @@ struct EngineParameters {
     float targetLUFS = -9.0f;
     float maxBoostDb = 12.0f;
     float maxCutDb = 12.0f;
-    float levelResponse = 0.25f; // 0..1 slider, maps to memory half-life
+    float levelResponse = 0.85f; // 0..1 slider, maps to memory half-life
     bool freezeBreakdowns = true;
     float toneSlopeDbPerOctave = -2.0f; // -6.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
