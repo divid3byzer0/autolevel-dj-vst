@@ -53,14 +53,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure CMake (MSVC x64)
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+      - name: Set up MSVC environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure CMake (Ninja x64)
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build VST3, Standalone, and Test
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: Run DSP Unit Tests
-        run: .\build\Release\dsp_test.exe
+        run: .\build\dsp_test.exe
 
       - name: Package Windows x64 Artifacts
         shell: pwsh
@@ -84,14 +89,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure CMake (MSVC Win32)
-        run: cmake -B build -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
+      - name: Set up MSVC environment (x86)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Configure CMake (Ninja x86)
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build VST3, Standalone, and Test
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: Run DSP Unit Tests
-        run: .\build\Release\dsp_test.exe
+        run: .\build\dsp_test.exe
 
       - name: Package Windows x86 Artifacts
         shell: pwsh
@@ -110,7 +120,6 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [build-macos, build-windows-x64, build-windows-x86]
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -138,14 +147,13 @@ jobs:
             echo "tag=v1.0.0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create or Update GitHub Release
+      - name: Upload Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_info.outputs.tag }}
           name: AutoLevel DJ ${{ steps.tag_info.outputs.tag }}
           draft: false
           prerelease: false
-          generate_release_notes: true
           files: |
             autolevel-dj-macos.zip
             autolevel-dj-windows-x64.zip
