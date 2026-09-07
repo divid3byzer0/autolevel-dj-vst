@@ -752,7 +752,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     g.drawText("AUTOLEVEL DJ", 22, 10, 160, 24, juce::Justification::left);
 
     // PRO badge
-    juce::Rectangle<float> badgeRect(178.0f, 13.0f, 38.0f, 16.0f);
+    juce::Rectangle<float> badgeRect(186.0f, 13.0f, 38.0f, 16.0f);
     g.setColour(juce::Colour(0xff00e5ff).withAlpha(0.18f));
     g.fillRoundedRectangle(badgeRect, 3.0f);
     g.setColour(juce::Colour(0xff00e5ff));
@@ -989,7 +989,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     float meterBoxX = 726.0f;
     float meterBoxY = 418.0f;
     float meterBoxW = 84.0f;
-    float meterBoxH = 220.0f;
+    float meterBoxH = 222.0f;
 
     juce::Rectangle<float> meterFrame(meterBoxX, meterBoxY, meterBoxW, meterBoxH);
     juce::ColourGradient meterGrad(juce::Colour(0xff121620), meterBoxX, meterBoxY,
@@ -1003,7 +1003,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     g.setColour(juce::Colour(0xff8a96a7));
     g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     g.drawText("OUT / GR", static_cast<int>(meterBoxX), static_cast<int>(meterBoxY + 5.0f),
-               static_cast<int>(meterBoxW), 13, juce::Justification::centred);
+               static_cast<int>(meterBoxW), 14, juce::Justification::centred);
 
     // 2. Limiter Gain Reduction Readout Badge (Displays Peak-Held Max GR, Click to Reset)
     float heldGr = m_maxHeldLimiterGrDb;
@@ -1015,7 +1015,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
         g.setColour(juce::Colour(0xffff3366));
         g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
         g.setColour(juce::Colour(0xffff3366));
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
         g.drawText(juce::String(heldGr, 1) + " dB", grBadge, juce::Justification::centred);
     } else {
         g.setColour(juce::Colour(0xff10141d));
@@ -1023,26 +1023,26 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
         g.setColour(juce::Colour(0xff1e2634));
         g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
         g.setColour(juce::Colour(0xff606c7d));
-        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
         g.drawText("0.0 dB GR", grBadge, juce::Justification::centred);
     }
 
-    // 3. Meters Area: from y = 41px to 175px (height = 134px)
-    float barTopY = meterBoxY + 41.0f;
-    float barH = 134.0f;
+    // 3. Meters Area: from y = 46px to 172px (height = 126px)
+    float barTopY = meterBoxY + 46.0f;
+    float barH = 126.0f;
 
-    // A. Limiter GR Meter (deflects DOWNWARD from top, 0 to -6 dB)
-    float grBarX = meterBoxX + 8.0f;
-    float grBarW = 12.0f;
+    // A. Limiter GR Meter (deflects DOWNWARD from top, on identical 0 to -36 dB scale)
+    float grBarX = meterBoxX + 7.0f;
+    float grBarW = 11.0f;
     juce::Rectangle<float> grTrough(grBarX, barTopY, grBarW, barH);
     g.setColour(juce::Colour(0xff090b10));
     g.fillRoundedRectangle(grTrough, 2.0f);
     g.setColour(juce::Colour(0xff1a212d));
     g.drawRoundedRectangle(grTrough, 2.0f, 1.0f);
 
-    // Downward deflection fill (0 dB at top down to -6 dB at bottom)
-    float normLimGr = std::clamp(-curGr / 6.0f, 0.0f, 1.0f);
-    if (normLimGr > 0.01f) {
+    // Downward deflection fill matching EXACT 36 dB scale
+    float normLimGr = std::clamp(-curGr / 36.0f, 0.0f, 1.0f);
+    if (normLimGr > 0.005f) {
         float grFillH = normLimGr * (barH - 2.0f);
         juce::Rectangle<float> grFill(grBarX + 1.0f, barTopY + 1.0f, grBarW - 2.0f, grFillH);
         juce::ColourGradient grGrad(juce::Colour(0xffffea00), grBarX, barTopY,
@@ -1051,24 +1051,24 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
         g.fillRoundedRectangle(grFill, 1.5f);
     }
 
-    // Peak-held line on GR bar (shows max reduction visually)
-    float normHeldGr = std::clamp(-heldGr / 6.0f, 0.0f, 1.0f);
-    if (normHeldGr > 0.015f) {
+    // Peak-held line on GR bar (shows max reduction visually on identical 36 dB scale)
+    float normHeldGr = std::clamp(-heldGr / 36.0f, 0.0f, 1.0f);
+    if (normHeldGr > 0.008f) {
         float heldY = barTopY + 1.0f + normHeldGr * (barH - 3.0f);
         g.setColour(juce::Colour(0xffff3366));
         g.fillRect(grBarX + 1.0f, heldY, grBarW - 2.0f, 2.0f);
     }
 
     // Label for GR bar below
-    float labelY = barTopY + barH + 2.0f;
+    float labelY = barTopY + barH + 5.0f;
     g.setColour((curGr < -0.05f) ? juce::Colour(0xffff3366) : juce::Colour(0xff556272));
     g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-    g.drawText("GR", static_cast<int>(grBarX - 2.0f), static_cast<int>(labelY),
-               static_cast<int>(grBarW + 4.0f), 11, juce::Justification::centred);
+    g.drawText("GR", static_cast<int>(grBarX - 1.0f), static_cast<int>(labelY),
+               static_cast<int>(grBarW + 2.0f), 12, juce::Justification::centred);
 
     // B. Master Peak Meters (L & R)
-    float lBarX = meterBoxX + 26.0f;
-    float rBarX = meterBoxX + 38.0f;
+    float lBarX = meterBoxX + 24.0f;
+    float rBarX = meterBoxX + 36.0f;
     float peakBarW = 9.0f;
 
     juce::Rectangle<float> lTrough(lBarX, barTopY, peakBarW, barH);
@@ -1080,7 +1080,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     g.drawRoundedRectangle(lTrough, 2.0f, 1.0f);
     g.drawRoundedRectangle(rTrough, 2.0f, 1.0f);
 
-    // Scale mapping (-36 dBFS to 0 dBFS)
+    // Scale mapping (-36 dBFS to 0 dBFS) - SHARED IDENTICALLY BY GR AND OUTPUT PEAK
     auto dbToY = [barTopY, barH](float db) noexcept -> float {
         float norm = std::clamp((db + 36.0f) / 36.0f, 0.0f, 1.0f);
         return barTopY + (1.0f - norm) * barH;
@@ -1115,31 +1115,44 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     // Labels for L & R below bars
     g.setColour(juce::Colour(0xff758394));
     g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-    g.drawText("L", static_cast<int>(lBarX), static_cast<int>(labelY),
-               static_cast<int>(peakBarW), 11, juce::Justification::centred);
-    g.drawText("R", static_cast<int>(rBarX), static_cast<int>(labelY),
-               static_cast<int>(peakBarW), 11, juce::Justification::centred);
+    g.drawText("L", static_cast<int>(lBarX - 1.0f), static_cast<int>(labelY),
+               static_cast<int>(peakBarW + 2.0f), 12, juce::Justification::centred);
+    g.drawText("R", static_cast<int>(rBarX - 1.0f), static_cast<int>(labelY),
+               static_cast<int>(peakBarW + 2.0f), 12, juce::Justification::centred);
 
-    // C. dB Scale Ticks on Right
-    g.setFont(juce::FontOptions(8.0f, juce::Font::bold));
+    // C. dB Scale Ticks on Right (with intermediate -3 dB and -18 dB notches)
+    for (float subT : { -3.0f, -18.0f }) {
+        float subY = dbToY(subT);
+        g.setColour(juce::Colour(0xff1d2533));
+        g.drawHorizontalLine(static_cast<int>(std::round(subY)), rBarX + peakBarW + 2.0f, rBarX + peakBarW + 6.0f);
+    }
+
     std::array<float, 5> ticks = { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f };
     for (float t : ticks) {
         float ty = dbToY(t);
-        g.setColour(juce::Colour(0xff222a38));
-        g.drawHorizontalLine(static_cast<int>(ty), rBarX + peakBarW + 2.0f, meterBoxX + meterBoxW - 4.0f);
-        g.setColour((t == 0.0f) ? juce::Colour(0xffff3366) : juce::Colour(0xff657283));
-        juce::String tStr = (t == 0.0f) ? "0" : juce::String(static_cast<int>(t));
-        g.drawText(tStr, static_cast<int>(meterBoxX + 50.0f), static_cast<int>(ty - 5.0f), 30, 10, juce::Justification::centredLeft);
+        g.setColour(juce::Colour(0xff252e3e));
+        g.drawHorizontalLine(static_cast<int>(std::round(ty)), rBarX + peakBarW + 2.0f, rBarX + peakBarW + 7.0f);
+
+        bool isZero = (std::abs(t) < 0.1f);
+        bool isBottom = (std::abs(t + 36.0f) < 0.1f);
+
+        g.setColour(isZero ? juce::Colour(0xffff3366) : juce::Colour(0xff657283));
+        g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+        juce::String tStr = isZero ? "0" : juce::String(static_cast<int>(t));
+
+        float textY = isZero ? (ty - 2.0f) :
+                      isBottom ? (ty - 9.0f) : (ty - 5.0f);
+        g.drawText(tStr, static_cast<int>(meterBoxX + 48.0f), static_cast<int>(textY), 30, 11, juce::Justification::centredLeft);
     }
 
-    // 4. Max Peak Numeric Readout Pod at bottom (recessed badge, completely separate from L/R labels)
+    // 4. Max Peak Numeric Readout Pod at bottom (recessed dark pod with dedicated margins)
     float maxPeakDb = std::max(m_latestState.outputPeakDbL, m_latestState.outputPeakDbR);
     juce::String peakStr = (maxPeakDb > -50.0f) ? (juce::String(maxPeakDb, 1) + " dBFS") : "---.- dBFS";
-    juce::Rectangle<float> peakBadge(meterBoxX + 6.0f, meterBoxY + meterBoxH - 26.0f, meterBoxW - 12.0f, 18.0f);
-    g.setColour(juce::Colour(0xff0e1219));
-    g.fillRoundedRectangle(peakBadge, 3.0f);
-    g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff1a212d));
-    g.drawRoundedRectangle(peakBadge, 3.0f, 1.0f);
+    juce::Rectangle<float> peakBadge(meterBoxX + 6.0f, meterBoxY + 195.0f, meterBoxW - 12.0f, 20.0f);
+    g.setColour(juce::Colour(0xff090c12));
+    g.fillRoundedRectangle(peakBadge, 3.5f);
+    g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff18202d));
+    g.drawRoundedRectangle(peakBadge, 3.5f, 1.0f);
 
     g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff00e5ff));
     g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
@@ -1148,7 +1161,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
 
 void AutoLevelDJAudioProcessorEditor::contentMouseDown(const juce::MouseEvent& e) {
     // Click on OUT / GR meter panel resets the peak-held maximum gain reduction
-    juce::Rectangle<int> grClickArea(726, 418, 84, 220);
+    juce::Rectangle<int> grClickArea(726, 418, 84, 222);
     if (grClickArea.contains(e.getPosition())) {
         m_maxHeldLimiterGrDb = m_latestState.limiterGainReductionDb; // Reset peak hold to current reduction
         m_content.repaint();
