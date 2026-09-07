@@ -5,6 +5,8 @@
 
 namespace autolevel::dsp {
 
+inline constexpr double PI = 3.14159265358979323846;
+
 /**
  * 2nd-order Biquad filter (Direct Form II Transposed)
  * Provides Butterworth Low-pass and High-pass filters with Q = 0.70710678 (1/sqrt(2)).
@@ -17,7 +19,7 @@ public:
     Biquad() = default;
 
     void setup(Type type, double cutoffHz, double sampleRate) {
-        double omega = 2.0 * M_PI * cutoffHz / sampleRate;
+        double omega = 2.0 * PI * cutoffHz / sampleRate;
         double sn = std::sin(omega);
         double cs = std::cos(omega);
         double alpha = sn / (2.0 * 0.7071067811865475); // Q = 1/sqrt(2)

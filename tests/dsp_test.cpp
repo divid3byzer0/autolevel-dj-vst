@@ -6,6 +6,8 @@
 
 using namespace autolevel::dsp;
 
+constexpr double TEST_PI = 3.14159265358979323846;
+
 void testKWeightingSineWave() {
     std::cout << "[TEST] KWeightingFilter 1kHz calibration..." << std::endl;
     KWeightingFilter filter;
@@ -20,7 +22,7 @@ void testKWeightingSineWave() {
 
     for (size_t i = 0; i < n; ++i) {
         double t = static_cast<double>(i) / sampleRate;
-        double s = std::sin(2.0 * M_PI * freq * t);
+        double s = std::sin(2.0 * TEST_PI * freq * t);
         sumSqIn += s * s;
 
         double outL = 0.0, outR = 0.0;
@@ -58,7 +60,7 @@ void testLR4CrossoverSummation() {
         size_t n = 4800; // 100 ms
         std::vector<float> inL(n), inR(n), origL(n);
         for (size_t i = 0; i < n; ++i) {
-            float s = static_cast<float>(std::sin(2.0 * M_PI * f * (static_cast<double>(i) / sampleRate)));
+            float s = static_cast<float>(std::sin(2.0 * TEST_PI * f * (static_cast<double>(i) / sampleRate)));
             inL[i] = s;
             inR[i] = s;
             origL[i] = s;
@@ -107,7 +109,7 @@ void testLevelerAndLimiter() {
     for (size_t b = 0; b < totalBlocks; ++b) {
         std::vector<float> left(block), right(block);
         for (size_t i = 0; i < block; ++i) {
-            float s = 0.125f * static_cast<float>(std::sin(2.0 * M_PI * 440.0 * (b * block + i) / sampleRate));
+            float s = 0.125f * static_cast<float>(std::sin(2.0 * TEST_PI * 440.0 * (b * block + i) / sampleRate));
             left[i] = s;
             right[i] = s;
         }

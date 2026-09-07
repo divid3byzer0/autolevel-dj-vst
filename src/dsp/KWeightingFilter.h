@@ -6,6 +6,8 @@
 
 namespace autolevel::dsp {
 
+inline constexpr double PI_CONST = 3.14159265358979323846;
+
 /**
  * ITU-R BS.1770-4 K-weighting pre-filter.
  * Cascades:
@@ -58,7 +60,7 @@ private:
         const double dbGain = 3.999843853973347;
         const double f0_1 = 1681.974450955533;
         const double Q1 = 0.707175236927419;
-        const double K1 = std::tan(M_PI * f0_1 / fs);
+        const double K1 = std::tan(PI_CONST * f0_1 / fs);
         const double Vh = std::pow(10.0, dbGain / 20.0);
         const double Vb = std::pow(Vh, 0.4996667741545416);
 
@@ -73,7 +75,7 @@ private:
         // Stage 2: High pass (RLB weighting, f0 ~ 38.135 Hz, Q ~ 0.5003)
         const double f0_2 = 38.13547087602444;
         const double Q2 = 0.5003270373238773;
-        const double K2 = std::tan(M_PI * f0_2 / fs);
+        const double K2 = std::tan(PI_CONST * f0_2 / fs);
         const double a0_2 = 1.0 + K2 / Q2 + K2 * K2;
 
         m_b2[0] = 1.0 / a0_2;

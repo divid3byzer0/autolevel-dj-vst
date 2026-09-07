@@ -13,11 +13,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(juce)
 
+if (APPLE)
+    set(PLUGIN_FORMATS VST3 AU Standalone)
+else()
+    set(PLUGIN_FORMATS VST3 Standalone)
+endif()
+
 juce_add_plugin(AutoLevelDJ
     COMPANY_NAME "DistrictNoir"
     PLUGIN_MANUFACTURER_CODE DstN
     PLUGIN_CODE AlDj
-    FORMATS VST3 AU Standalone
+    FORMATS ${PLUGIN_FORMATS}
     PRODUCT_NAME "AutoLevel DJ"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
@@ -58,15 +64,26 @@ add_executable(dsp_test tests/dsp_test.cpp)
 target_include_directories(dsp_test PRIVATE src)
 
 # Convenience target to install VST3 and AU into user's audio plugin folder
-add_custom_target(install_plugins
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/VST3"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/Components"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
-        "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/AutoLevel DJ.vst3"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/AU/AutoLevel DJ.component"
-        "$ENV{HOME}/Library/Audio/Plug-Ins/Components/AutoLevel DJ.component"
-    COMMENT "Installing VST3 and AU plugins to ~/Library/Audio/Plug-Ins..."
-    VERBATIM
-)
+if (APPLE)
+    add_custom_target(install_plugins
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/VST3"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/Library/Audio/Plug-Ins/Components"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
+            "$ENV{HOME}/Library/Audio/Plug-Ins/VST3/AutoLevel DJ.vst3"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/AU/AutoLevel DJ.component"
+            "$ENV{HOME}/Library/Audio/Plug-Ins/Components/AutoLevel DJ.component"
+        COMMENT "Installing VST3 and AU plugins to ~/Library/Audio/Plug-Ins..."
+        VERBATIM
+    )
+elseif (WIN32)
+    add_custom_target(install_plugins
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{COMMONPROGRAMFILES}/VST3"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
+            "$ENV{COMMONPROGRAMFILES}/VST3/AutoLevel DJ.vst3"
+        COMMENT "Installing VST3 plugin to %COMMONPROGRAMFILES%/VST3..."
+        VERBATIM
+    )
+endif()
