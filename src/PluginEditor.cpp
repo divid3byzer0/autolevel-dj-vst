@@ -945,20 +945,20 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     // 1. Header
     g.setColour(juce::Colour(0xff8a96a7));
     g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    g.drawText("OUT / GR", static_cast<int>(meterBoxX), static_cast<int>(meterBoxY + 6.0f),
-               static_cast<int>(meterBoxW), 14, juce::Justification::centred);
+    g.drawText("OUT / GR", static_cast<int>(meterBoxX), static_cast<int>(meterBoxY + 5.0f),
+               static_cast<int>(meterBoxW), 13, juce::Justification::centred);
 
     // 2. Limiter Gain Reduction Readout Badge (Displays Peak-Held Max GR, Click to Reset)
     float heldGr = m_maxHeldLimiterGrDb;
     float curGr = m_latestState.limiterGainReductionDb;
-    juce::Rectangle<float> grBadge(meterBoxX + 6.0f, meterBoxY + 22.0f, meterBoxW - 12.0f, 18.0f);
+    juce::Rectangle<float> grBadge(meterBoxX + 6.0f, meterBoxY + 20.0f, meterBoxW - 12.0f, 17.0f);
     if (heldGr < -0.05f) {
         g.setColour(juce::Colour(0xff2a141b));
         g.fillRoundedRectangle(grBadge, 3.0f);
         g.setColour(juce::Colour(0xffff3366));
         g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
         g.setColour(juce::Colour(0xffff3366));
-        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
+        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
         g.drawText(juce::String(heldGr, 1) + " dB", grBadge, juce::Justification::centred);
     } else {
         g.setColour(juce::Colour(0xff10141d));
@@ -970,9 +970,9 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.drawText("0.0 dB GR", grBadge, juce::Justification::centred);
     }
 
-    // 3. Meters Area: from y = 44px to 198px (height = 154px)
-    float barTopY = meterBoxY + 44.0f;
-    float barH = 154.0f;
+    // 3. Meters Area: from y = 41px to 175px (height = 134px)
+    float barTopY = meterBoxY + 41.0f;
+    float barH = 134.0f;
 
     // A. Limiter GR Meter (deflects DOWNWARD from top, 0 to -6 dB)
     float grBarX = meterBoxX + 8.0f;
@@ -1003,10 +1003,11 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     }
 
     // Label for GR bar below
+    float labelY = barTopY + barH + 2.0f;
     g.setColour((curGr < -0.05f) ? juce::Colour(0xffff3366) : juce::Colour(0xff556272));
     g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-    g.drawText("GR", static_cast<int>(grBarX - 2.0f), static_cast<int>(barTopY + barH + 2.0f),
-               static_cast<int>(grBarW + 4.0f), 10, juce::Justification::centred);
+    g.drawText("GR", static_cast<int>(grBarX - 2.0f), static_cast<int>(labelY),
+               static_cast<int>(grBarW + 4.0f), 11, juce::Justification::centred);
 
     // B. Master Peak Meters (L & R)
     float lBarX = meterBoxX + 26.0f;
@@ -1057,10 +1058,10 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     // Labels for L & R below bars
     g.setColour(juce::Colour(0xff758394));
     g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-    g.drawText("L", static_cast<int>(lBarX), static_cast<int>(barTopY + barH + 2.0f),
-               static_cast<int>(peakBarW), 10, juce::Justification::centred);
-    g.drawText("R", static_cast<int>(rBarX), static_cast<int>(barTopY + barH + 2.0f),
-               static_cast<int>(peakBarW), 10, juce::Justification::centred);
+    g.drawText("L", static_cast<int>(lBarX), static_cast<int>(labelY),
+               static_cast<int>(peakBarW), 11, juce::Justification::centred);
+    g.drawText("R", static_cast<int>(rBarX), static_cast<int>(labelY),
+               static_cast<int>(peakBarW), 11, juce::Justification::centred);
 
     // C. dB Scale Ticks on Right
     g.setFont(juce::FontOptions(8.0f, juce::Font::bold));
@@ -1074,13 +1075,18 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.drawText(tStr, static_cast<int>(meterBoxX + 50.0f), static_cast<int>(ty - 5.0f), 30, 10, juce::Justification::centredLeft);
     }
 
-    // 4. Max Peak Numeric Readout at bottom
+    // 4. Max Peak Numeric Readout Pod at bottom (recessed badge, completely separate from L/R labels)
     float maxPeakDb = std::max(m_latestState.outputPeakDbL, m_latestState.outputPeakDbR);
     juce::String peakStr = (maxPeakDb > -50.0f) ? (juce::String(maxPeakDb, 1) + " dBFS") : "---.- dBFS";
+    juce::Rectangle<float> peakBadge(meterBoxX + 6.0f, meterBoxY + meterBoxH - 26.0f, meterBoxW - 12.0f, 18.0f);
+    g.setColour(juce::Colour(0xff0e1219));
+    g.fillRoundedRectangle(peakBadge, 3.0f);
+    g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff1a212d));
+    g.drawRoundedRectangle(peakBadge, 3.0f, 1.0f);
+
     g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff00e5ff));
-    g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
-    g.drawText(peakStr, static_cast<int>(meterBoxX + 4.0f), static_cast<int>(meterBoxY + meterBoxH - 16.0f),
-               static_cast<int>(meterBoxW - 8.0f), 12, juce::Justification::centred);
+    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    g.drawText(peakStr, peakBadge, juce::Justification::centred);
 }
 
 void AutoLevelDJAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
@@ -1093,7 +1099,7 @@ void AutoLevelDJAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
 }
 
 void AutoLevelDJAudioProcessorEditor::mouseMove(const juce::MouseEvent& e) {
-    juce::Rectangle<int> grBadgeArea(732, 440, 72, 22);
+    juce::Rectangle<int> grBadgeArea(732, 438, 72, 18);
     if (grBadgeArea.contains(e.getPosition())) {
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     } else {
