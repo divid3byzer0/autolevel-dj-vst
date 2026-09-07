@@ -78,9 +78,9 @@ public:
         }
 
         float targetGain = 0.0f;
-        if (weight == SubWeight::LOW) targetGain = 0.22f;
-        else if (weight == SubWeight::MED) targetGain = 0.45f;
-        else if (weight == SubWeight::HIGH) targetGain = 0.75f;
+        if (weight == SubWeight::LOW) targetGain = 0.40f;
+        else if (weight == SubWeight::MED) targetGain = 0.80f;
+        else if (weight == SubWeight::HIGH) targetGain = 1.35f;
 
         float blockPeak = 0.0f;
 
@@ -123,9 +123,9 @@ public:
             double adaptiveScale = 1.0;
             if (m_bassEnergy > 1e-6) {
                 double subToBassRatio = std::sqrt(m_nativeSubEnergy / m_bassEnergy);
-                // If subToBassRatio >= 0.8 (heavy modern sub), scale down to 0.1
-                // If subToBassRatio <= 0.2 (thin vintage track), full scale 1.0
-                adaptiveScale = std::clamp(1.0 - (subToBassRatio - 0.2) / 0.6, 0.1, 1.0);
+                // If subToBassRatio >= 0.85 (heavy modern sub), scale down to 0.15
+                // If subToBassRatio <= 0.25 (thin vintage track), full scale 1.0
+                adaptiveScale = std::clamp(1.0 - (subToBassRatio - 0.25) / 0.60, 0.15, 1.0);
             }
 
             // 7. Inject mono sub into L & R

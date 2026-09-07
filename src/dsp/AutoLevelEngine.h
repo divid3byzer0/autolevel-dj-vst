@@ -24,7 +24,7 @@ struct EngineParameters {
     AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
-    float ceilingDb = -1.5f;
+    float ceilingDb = -0.3f;        // -0.3 dBFS default master ceiling
     bool bypass = false;
 };
 
@@ -36,6 +36,8 @@ struct EngineVisualState {
     std::array<float, Bands::COUNT> mbcGainReductionsDb{};
     std::array<float, Bands::COUNT> mbcThresholdsDb{};
     float limiterGainReductionDb = 0.0f;
+    float outputPeakDbL = -60.0f;
+    float outputPeakDbR = -60.0f;
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
@@ -69,6 +71,8 @@ public:
         m_airExciter.reset();
         m_mbc.reset();
         m_limiter.reset();
+        m_outPeakLinL = 0.0f;
+        m_outPeakLinR = 0.0f;
     }
 
     /**
@@ -126,6 +130,17 @@ public:
         m_limiter.setCeilingDb(params.ceilingDb);
         m_limiter.process(left, right, numSamples);
 
+        // 6.5. Track master output peak (linear with decay for smooth visual metering)
+        float blockPeakL = 0.0f;
+        float blockPeakR = 0.0f;
+        for (size_t s = 0; s < numSamples; ++s) {
+            blockPeakL = std::max(blockPeakL, std::abs(left[s]));
+            blockPeakR = std::max(blockPeakR, std::abs(right[s]));
+        }
+        float decayLin = dtSeconds * 2.0f; // ~20 dB/sec decay
+        m_outPeakLinL = (blockPeakL > m_outPeakLinL) ? blockPeakL : std::max(0.0f, m_outPeakLinL - decayLin);
+        m_outPeakLinR = (blockPeakR > m_outPeakLinR) ? blockPeakR : std::max(0.0f, m_outPeakLinR - decayLin);
+
         // 7. Cache state for UI
         m_visualState.loudness = readings;
         m_visualState.appliedGainDb = m_leveler.getCurrentGainDb();
@@ -136,6 +151,8 @@ public:
             true, params.toneSlopeDbPerOctave, params.targetProfile, mbcParams.baseThresholdDb
         );
         m_visualState.limiterGainReductionDb = m_limiter.getGainReductionDb();
+        m_visualState.outputPeakDbL = (m_outPeakLinL > 1e-4f) ? (20.0f * std::log10(m_outPeakLinL)) : -60.0f;
+        m_visualState.outputPeakDbR = (m_outPeakLinR > 1e-4f) ? (20.0f * std::log10(m_outPeakLinR)) : -60.0f;
         m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         m_visualState.activeProfile = params.targetProfile;
         m_visualState.activeMbcSpeed = params.mbcSpeed;
@@ -159,6 +176,9 @@ private:
     AirHarmonicExciter m_airExciter;
     MultibandCompressor m_mbc;
     SafetyLimiter m_limiter;
+
+    float m_outPeakLinL = 0.0f;
+    float m_outPeakLinR = 0.0f;
 
     EngineVisualState m_visualState;
 };

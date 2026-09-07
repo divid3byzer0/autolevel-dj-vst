@@ -81,7 +81,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::ParameterID{ID_CEILING_DB, 1},
         "Limiter Ceiling",
         juce::NormalisableRange<float>(-3.0f, 0.0f, 0.1f),
-        -1.5f,
+        -0.3f, // Default: -0.3 dBFS
         juce::AudioParameterFloatAttributes().withLabel("dBFS")));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -191,7 +191,7 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     else params.airWeight = autolevel::dsp::AirWeight::OFF;
 
     params.postMbcGainDb = m_postMbcGainParam ? m_postMbcGainParam->load() : 0.0f;
-    params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -1.5f;
+    params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -0.3f;
     params.freezeBreakdowns = m_freezeBreakdownsParam ? (m_freezeBreakdownsParam->load() > 0.5f) : true;
     params.bypass = m_bypassParam ? (m_bypassParam->load() > 0.5f) : false;
 

@@ -89,8 +89,8 @@ private:
     double m_attackCoeff = 0.0;
     double m_releaseCoeff = 0.0;
     double m_envelope = 0.0;
-    float m_ceilingDb = -1.5f; // -1.5 dBFS default matching Android
-    float m_ceilingLin = 0.84139514f;
+    float m_ceilingDb = -0.3f; // -0.3 dBFS default master ceiling
+    float m_ceilingLin = 0.96605088f;
     float m_gainReductionDb = 0.0f;
 };
 

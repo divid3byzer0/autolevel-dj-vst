@@ -437,6 +437,14 @@ void testAirHarmonicExciter() {
     std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing air from harshness." << std::endl;
 }
 
+void testDefaultLimiterCeiling() {
+    std::cout << "[TEST] Default limiter ceiling is -0.3 dBFS..." << std::endl;
+    EngineParameters defaultParams;
+    std::cout << "  Default ceiling: " << defaultParams.ceilingDb << " dBFS" << std::endl;
+    assert(std::abs(defaultParams.ceilingDb - (-0.3f)) < 0.001f);
+    std::cout << "  -> PASS: Default limiter ceiling is -0.3 dBFS." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -451,6 +459,7 @@ int main() {
     testPostMbcGain();
     testSubHarmonicWeightInjector();
     testAirHarmonicExciter();
+    testDefaultLimiterCeiling();
     testFullChain();
 
     std::cout << "============================================" << std::endl;

@@ -84,9 +84,9 @@ public:
         }
 
         float targetGain = 0.0f;
-        if (weight == AirWeight::LOW) targetGain = 0.20f;
-        else if (weight == AirWeight::MED) targetGain = 0.42f;
-        else if (weight == AirWeight::HIGH) targetGain = 0.72f;
+        if (weight == AirWeight::LOW) targetGain = 0.38f;
+        else if (weight == AirWeight::MED) targetGain = 0.75f;
+        else if (weight == AirWeight::HIGH) targetGain = 1.30f;
 
         float blockPeak = 0.0f;
 
@@ -110,12 +110,12 @@ public:
 
             // 3. Nonlinear harmonic generator:
             // Asymmetric soft polynomial saturation generates 2nd harmonic (octave doubling 4-8 kHz -> 8-16 kHz)
-            // and 3rd harmonic sheen.
+            // and 3rd harmonic sheen with robust drive.
             auto generateHarmonics = [](double x) noexcept -> double {
-                double xNorm = std::clamp(x * 2.0, -1.5, 1.5);
+                double xNorm = std::clamp(x * 3.5, -2.0, 2.0);
                 // Even (2nd order) + Odd (3rd order) harmonic expansion
-                double evenHarmonic = 0.7 * (xNorm * xNorm);
-                double oddHarmonic = 0.3 * (xNorm - (xNorm * xNorm * xNorm) / 3.0);
+                double evenHarmonic = 0.85 * (xNorm * xNorm);
+                double oddHarmonic = 0.40 * (xNorm - (xNorm * xNorm * xNorm) / 3.0);
                 return evenHarmonic + oddHarmonic;
             };
 
@@ -132,9 +132,9 @@ public:
             double adaptiveScale = 1.0;
             if (m_midEnergy > 1e-8) {
                 double airToMidRatio = std::sqrt(m_nativeAirEnergy / m_midEnergy);
-                // If airToMidRatio >= 0.55 (bright modern track), attenuate down to 0.05
-                // If airToMidRatio <= 0.20 (dark vintage track), full scale 1.0
-                adaptiveScale = std::clamp(1.0 - (airToMidRatio - 0.20) / 0.35, 0.05, 1.0);
+                // If airToMidRatio >= 0.65 (bright modern track), attenuate down to 0.08
+                // If airToMidRatio <= 0.25 (dark vintage track), full scale 1.0
+                adaptiveScale = std::clamp(1.0 - (airToMidRatio - 0.25) / 0.40, 0.08, 1.0);
             }
 
             // 6. Inject pristine air into L & R

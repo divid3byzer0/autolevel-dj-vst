@@ -921,6 +921,149 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     // Card 5: Parameters Panel (Bottom Full Width)
     juce::Rectangle<int> ctrlCard(20, 404, 800, 244);
     drawCard(ctrlCard, "MASTER PROCESSOR CONTROLS");
+
+    // Master Output Peak & Limiter Gain Reduction Meter (Right of Card 5)
+    float meterBoxX = 726.0f;
+    float meterBoxY = 418.0f;
+    float meterBoxW = 84.0f;
+    float meterBoxH = 220.0f;
+
+    juce::Rectangle<float> meterFrame(meterBoxX, meterBoxY, meterBoxW, meterBoxH);
+    juce::ColourGradient meterGrad(juce::Colour(0xff121620), meterBoxX, meterBoxY,
+                                  juce::Colour(0xff0b0e14), meterBoxX, meterBoxY + meterBoxH, false);
+    g.setGradientFill(meterGrad);
+    g.fillRoundedRectangle(meterFrame, 5.0f);
+    g.setColour(juce::Colour(0xff222a38));
+    g.drawRoundedRectangle(meterFrame, 5.0f, 1.0f);
+
+    // 1. Header
+    g.setColour(juce::Colour(0xff8a96a7));
+    g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    g.drawText("OUT / GR", static_cast<int>(meterBoxX), static_cast<int>(meterBoxY + 6.0f),
+               static_cast<int>(meterBoxW), 14, juce::Justification::centred);
+
+    // 2. Limiter Gain Reduction Readout Badge
+    float limGr = m_latestState.limiterGainReductionDb; // 0.0 to negative dB
+    juce::Rectangle<float> grBadge(meterBoxX + 6.0f, meterBoxY + 22.0f, meterBoxW - 12.0f, 18.0f);
+    if (limGr < -0.05f) {
+        g.setColour(juce::Colour(0xff2a161b));
+        g.fillRoundedRectangle(grBadge, 3.0f);
+        g.setColour(juce::Colour(0xffff3366));
+        g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
+        g.setColour(juce::Colour(0xffff3366));
+        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
+        g.drawText(juce::String(limGr, 1) + " dB", grBadge, juce::Justification::centred);
+    } else {
+        g.setColour(juce::Colour(0xff10141d));
+        g.fillRoundedRectangle(grBadge, 3.0f);
+        g.setColour(juce::Colour(0xff1e2634));
+        g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
+        g.setColour(juce::Colour(0xff606c7d));
+        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.drawText("0.0 dB GR", grBadge, juce::Justification::centred);
+    }
+
+    // 3. Meters Area: from y = 44px to 198px (height = 154px)
+    float barTopY = meterBoxY + 44.0f;
+    float barH = 154.0f;
+
+    // A. Limiter GR Meter (deflects downward from top, 0 to -6 dB)
+    float grBarX = meterBoxX + 8.0f;
+    float grBarW = 7.0f;
+    juce::Rectangle<float> grTrough(grBarX, barTopY, grBarW, barH);
+    g.setColour(juce::Colour(0xff090b10));
+    g.fillRoundedRectangle(grTrough, 2.0f);
+    g.setColour(juce::Colour(0xff1a212d));
+    g.drawRoundedRectangle(grTrough, 2.0f, 1.0f);
+
+    float normLimGr = std::clamp(-limGr / 6.0f, 0.0f, 1.0f);
+    if (normLimGr > 0.01f) {
+        float grFillH = normLimGr * (barH - 2.0f);
+        juce::Rectangle<float> grFill(grBarX + 1.0f, barTopY + 1.0f, grBarW - 2.0f, grFillH);
+        juce::ColourGradient grGrad(juce::Colour(0xffffb300), grBarX, barTopY,
+                                    juce::Colour(0xffff3366), grBarX, barTopY + grFillH, false);
+        g.setGradientFill(grGrad);
+        g.fillRoundedRectangle(grFill, 1.5f);
+    }
+
+    // Label for GR bar below
+    g.setColour((limGr < -0.05f) ? juce::Colour(0xffff3366) : juce::Colour(0xff556272));
+    g.setFont(juce::FontOptions(8.0f, juce::Font::bold));
+    g.drawText("GR", static_cast<int>(grBarX - 2.0f), static_cast<int>(barTopY + barH + 2.0f),
+               static_cast<int>(grBarW + 4.0f), 10, juce::Justification::centred);
+
+    // B. Master Peak Meters (L & R)
+    float lBarX = meterBoxX + 23.0f;
+    float rBarX = meterBoxX + 35.0f;
+    float peakBarW = 10.0f;
+
+    juce::Rectangle<float> lTrough(lBarX, barTopY, peakBarW, barH);
+    juce::Rectangle<float> rTrough(rBarX, barTopY, peakBarW, barH);
+    g.setColour(juce::Colour(0xff090b10));
+    g.fillRoundedRectangle(lTrough, 2.0f);
+    g.fillRoundedRectangle(rTrough, 2.0f);
+    g.setColour(juce::Colour(0xff1a212d));
+    g.drawRoundedRectangle(lTrough, 2.0f, 1.0f);
+    g.drawRoundedRectangle(rTrough, 2.0f, 1.0f);
+
+    // Scale mapping (-36 dBFS to 0 dBFS)
+    auto dbToY = [barTopY, barH](float db) noexcept -> float {
+        float norm = std::clamp((db + 36.0f) / 36.0f, 0.0f, 1.0f);
+        return barTopY + (1.0f - norm) * barH;
+    };
+
+    auto drawPeakFill = [&g, barTopY, barH](float x, float w, float peakDb) {
+        float norm = std::clamp((peakDb + 36.0f) / 36.0f, 0.0f, 1.0f);
+        if (norm > 0.01f) {
+            float fillH = norm * (barH - 2.0f);
+            float fillY = barTopY + barH - 1.0f - fillH;
+            juce::Rectangle<float> fill(x + 1.0f, fillY, w - 2.0f, fillH);
+
+            juce::Colour topCol = (peakDb > -3.0f) ? juce::Colour(0xffff3366) :
+                                  (peakDb > -12.0f) ? juce::Colour(0xffffb300) : juce::Colour(0xff00e5ff);
+            juce::Colour botCol = juce::Colour(0xff00e5ff).withAlpha(0.6f);
+            juce::ColourGradient grad(topCol, x, fillY, botCol, x, barTopY + barH, false);
+            g.setGradientFill(grad);
+            g.fillRoundedRectangle(fill, 1.5f);
+        }
+    };
+
+    drawPeakFill(lBarX, peakBarW, m_latestState.outputPeakDbL);
+    drawPeakFill(rBarX, peakBarW, m_latestState.outputPeakDbR);
+
+    // Ceiling indicator line across L & R bars
+    float ceilingDb = static_cast<float>(m_ceilingSlider.getValue());
+    float ceilY = dbToY(ceilingDb);
+    g.setColour(juce::Colour(0xffff3366));
+    g.fillRect(lBarX - 1.0f, ceilY - 0.5f, (rBarX + peakBarW - lBarX) + 2.0f, 1.5f);
+
+    // Labels for L & R below bars
+    g.setColour(juce::Colour(0xff758394));
+    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+    g.drawText("L", static_cast<int>(lBarX), static_cast<int>(barTopY + barH + 2.0f),
+               static_cast<int>(peakBarW), 10, juce::Justification::centred);
+    g.drawText("R", static_cast<int>(rBarX), static_cast<int>(barTopY + barH + 2.0f),
+               static_cast<int>(peakBarW), 10, juce::Justification::centred);
+
+    // C. dB Scale Ticks on Right
+    g.setFont(juce::FontOptions(8.0f, juce::Font::bold));
+    std::array<float, 5> ticks = { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f };
+    for (float t : ticks) {
+        float ty = dbToY(t);
+        g.setColour(juce::Colour(0xff222a38));
+        g.drawHorizontalLine(static_cast<int>(ty), rBarX + peakBarW + 2.0f, meterBoxX + meterBoxW - 4.0f);
+        g.setColour((t == 0.0f) ? juce::Colour(0xffff3366) : juce::Colour(0xff657283));
+        juce::String tStr = (t == 0.0f) ? "0" : juce::String(static_cast<int>(t));
+        g.drawText(tStr, static_cast<int>(meterBoxX + 48.0f), static_cast<int>(ty - 5.0f), 32, 10, juce::Justification::centredLeft);
+    }
+
+    // 4. Max Peak Numeric Readout at bottom
+    float maxPeakDb = std::max(m_latestState.outputPeakDbL, m_latestState.outputPeakDbR);
+    juce::String peakStr = (maxPeakDb > -50.0f) ? (juce::String(maxPeakDb, 1) + " dBFS") : "---.- dBFS";
+    g.setColour((maxPeakDb >= ceilingDb - 0.1f) ? juce::Colour(0xffff3366) : juce::Colour(0xff00e5ff));
+    g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
+    g.drawText(peakStr, static_cast<int>(meterBoxX + 4.0f), static_cast<int>(meterBoxY + meterBoxH - 16.0f),
+               static_cast<int>(meterBoxW - 8.0f), 12, juce::Justification::centred);
 }
 
 void AutoLevelDJAudioProcessorEditor::resized() {
