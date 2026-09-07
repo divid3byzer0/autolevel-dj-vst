@@ -620,39 +620,45 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
 
     // Card 1: Perceived Loudness (Left)
     juce::Rectangle<int> integCard(20, 64, 230, 160);
-    drawCard(integCard, "PERCEIVED LOUDNESS (BS.1770)");
+    drawCard(integCard, "PERCEIVED LOUDNESS (EBU R128)");
 
     float integ = m_latestState.loudness.integratedLUFS;
-    g.setFont(juce::FontOptions(34.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(32.0f, juce::Font::bold));
     if (integ > -70.0f) {
         g.setColour(juce::Colour(0xff00e676));
-        g.drawText(juce::String(integ, 1) + " LUFS", integCard.getX(), integCard.getY() + 32, integCard.getWidth(), 38, juce::Justification::centred);
+        g.drawText(juce::String(integ, 1) + " LUFS", integCard.getX(), integCard.getY() + 28, integCard.getWidth(), 36, juce::Justification::centred);
     } else {
         g.setColour(juce::Colour(0xff4a5360));
-        g.drawText("---.- LUFS", integCard.getX(), integCard.getY() + 32, integCard.getWidth(), 38, juce::Justification::centred);
+        g.drawText("---.- LUFS", integCard.getX(), integCard.getY() + 28, integCard.getWidth(), 36, juce::Justification::centred);
     }
 
-    // Momentary & Target Delta
-    g.setFont(juce::FontOptions(11.5f, juce::Font::plain));
+    // Momentary & Short-Term Readings (EBU R128 M & S)
+    g.setFont(juce::FontOptions(10.5f, juce::Font::plain));
     float mom = m_latestState.loudness.momentaryLUFS;
-    juce::String momStr = (mom > -70.0f) ? (juce::String(mom, 1) + " LUFS") : "SILENT";
-    g.setColour(juce::Colour(0xff9aa3b0));
-    g.drawText("Momentary: " + momStr, integCard.getX() + 12, integCard.getY() + 78, integCard.getWidth() - 24, 18, juce::Justification::centred);
+    float st = m_latestState.loudness.shortTermLUFS;
+    juce::String momStr = (mom > -70.0f) ? (juce::String(mom, 1) + " LUFS") : "--.-";
+    juce::String stStr  = (st > -70.0f)  ? (juce::String(st, 1)  + " LUFS") : "--.-";
 
+    g.setColour(juce::Colour(0xff9aa3b0));
+    g.drawText("M (400ms): " + momStr + "  |  S (3s): " + stStr, integCard.getX() + 8, integCard.getY() + 70, integCard.getWidth() - 16, 16, juce::Justification::centred);
+
+    // Target Delta
     float targetLufs = static_cast<float>(m_targetLufsSlider.getValue());
     float delta = (integ > -70.0f) ? (integ - targetLufs) : 0.0f;
     juce::String deltaStr = (delta >= 0.0f) ? ("Δ +" + juce::String(delta, 1) + " LU") : ("Δ " + juce::String(delta, 1) + " LU");
     g.setColour((std::abs(delta) < 1.0f) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300));
-    g.drawText(deltaStr, integCard.getX() + 12, integCard.getY() + 98, integCard.getWidth() - 24, 18, juce::Justification::centred);
+    g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+    g.drawText("Target Delta: " + deltaStr, integCard.getX() + 12, integCard.getY() + 92, integCard.getWidth() - 24, 16, juce::Justification::centred);
 
     // Integrated Status Badge
-    juce::Rectangle<float> statusRect(static_cast<float>(integCard.getX() + 20), static_cast<float>(integCard.getY() + 124),
-                                      static_cast<float>(integCard.getWidth() - 40), 22.0f);
-    g.setColour(juce::Colour(0xff1a2230));
+    juce::Rectangle<float> statusRect(static_cast<float>(integCard.getX() + 16), static_cast<float>(integCard.getY() + 124),
+                                      static_cast<float>(integCard.getWidth() - 32), 22.0f);
+    g.setColour(juce::Colour(0xff18222f));
     g.fillRoundedRectangle(statusRect, 4.0f);
     g.setColour(juce::Colour(0xff00e676));
-    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
-    g.drawText("DUAL-GATED CALIBRATED", statusRect, juce::Justification::centred);
+    g.drawRoundedRectangle(statusRect, 4.0f, 1.0f);
+    g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
+    g.drawText("EBU R128 DUAL-GATED CALIBRATED", statusRect, juce::Justification::centred);
 
     // Card 2: AGC Gain Rider (Middle)
     juce::Rectangle<int> gainCard(260, 64, 230, 160);

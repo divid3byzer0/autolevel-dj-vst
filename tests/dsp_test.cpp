@@ -183,6 +183,43 @@ void testFullChain() {
     std::cout << "  -> PASS: Full chain leveled, compressed, and limited to ceiling." << std::endl;
 }
 
+void testEbuR128DynamicLoudness() {
+    std::cout << "[TEST] EBU R128 Loudness measurement across varying song levels..." << std::endl;
+    std::vector<float> inputLevels = { -6.0f, -12.0f, -18.0f, -24.0f };
+
+    for (float level : inputLevels) {
+        LoudnessMeter meter;
+        double sampleRate = 48000.0;
+        meter.prepare(sampleRate);
+
+        float amp = std::pow(10.0f, level / 20.0f);
+        size_t numBlocks = 40; // 4 seconds
+        size_t blockSize = 4800; // 100ms
+
+        for (size_t b = 0; b < numBlocks; ++b) {
+            std::vector<float> l(blockSize), r(blockSize);
+            for (size_t i = 0; i < blockSize; ++i) {
+                float s = amp * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * (b * blockSize + i) / sampleRate));
+                l[i] = s;
+                r[i] = s;
+            }
+            meter.process(l.data(), r.data(), blockSize);
+        }
+
+        auto readings = meter.getReadings();
+        std::cout << "  Input level " << level << " dBFS -> Integrated: "
+                  << readings.integratedLUFS << " LUFS, Momentary: "
+                  << readings.momentaryLUFS << " LUFS" << std::endl;
+
+        // In BS.1770/EBU R128, a 1kHz sine wave of peak amp A has RMS = A / sqrt(2) (-3.01 dB)
+        // With 1kHz K-weighting gain (~0.65 dB) and stereo (+3.01 dB) and -0.691 constant:
+        // Expected LUFS is approximately level.
+        assert(readings.integratedLUFS > -70.0f);
+        assert(std::abs(readings.integratedLUFS - level) < 1.0f);
+    }
+    std::cout << "  -> PASS: EBU R128 measures varying loudness accurately across all levels." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -192,6 +229,7 @@ int main() {
     testAndroidToneProfilesAndThresholds();
     testLR4CrossoverSummation();
     testLevelResponseMapping();
+    testEbuR128DynamicLoudness();
     testFullChain();
 
     std::cout << "============================================" << std::endl;

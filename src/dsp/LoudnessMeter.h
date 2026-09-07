@@ -10,10 +10,14 @@
 namespace autolevel::dsp {
 
 constexpr float SILENCE_LUFS = -120.0f;
-constexpr float ABSOLUTE_GATE_LUFS = -70.0f;
-constexpr float RELATIVE_GATE_LU = 10.0f;
-constexpr int HISTOGRAM_BINS = 97; // -120 dBFS to -24 dBFS (1 dB per bin)
-constexpr float HISTOGRAM_MIN_DB = -120.0f;
+constexpr float ABSOLUTE_GATE_LUFS = -70.0f; // EBU R128 absolute gate Gamma_a
+constexpr float RELATIVE_GATE_LU = 10.0f;     // EBU R128 relative gate Gamma_r
+
+// EBU R128 / BS.1770-4 high-precision histogram: -100.0 LUFS to +15.0 LUFS (0.1 LUFS resolution)
+constexpr float HISTOGRAM_MIN_LUFS = -100.0f;
+constexpr float HISTOGRAM_MAX_LUFS = 15.0f;
+constexpr float HISTOGRAM_BIN_WIDTH = 0.1f;
+constexpr int HISTOGRAM_BINS = static_cast<int>((HISTOGRAM_MAX_LUFS - HISTOGRAM_MIN_LUFS) / HISTOGRAM_BIN_WIDTH) + 1; // 1151 bins
 
 struct LoudnessReadings {
     float momentaryLUFS = SILENCE_LUFS;
@@ -172,7 +176,7 @@ private:
             }
         }
 
-        int bin = static_cast<int>(std::round(blockLUFS - HISTOGRAM_MIN_DB));
+        int bin = static_cast<int>(std::round((blockLUFS - HISTOGRAM_MIN_LUFS) / HISTOGRAM_BIN_WIDTH));
         bin = std::clamp(bin, 0, HISTOGRAM_BINS - 1);
         m_histogram[static_cast<size_t>(bin)] += 1.0;
         m_blocksIntegrated++;
@@ -189,7 +193,7 @@ private:
         return meanAbove(relativeThreshold);
     }
 
-    float meanAbove(float thresholdDb) {
+    float meanAbove(float thresholdLUFS) {
         double powerSum = 0.0;
         double weightSum = 0.0;
 
@@ -197,15 +201,15 @@ private:
             double n = m_histogram[static_cast<size_t>(i)];
             if (n <= 0.0) continue;
 
-            float centerDb = HISTOGRAM_MIN_DB + static_cast<float>(i);
-            if (centerDb < thresholdDb) continue;
+            float centerLUFS = HISTOGRAM_MIN_LUFS + static_cast<float>(i) * HISTOGRAM_BIN_WIDTH;
+            if (centerLUFS < thresholdLUFS) continue;
 
-            powerSum += n * std::pow(10.0, centerDb / 10.0);
+            powerSum += n * std::pow(10.0, (centerLUFS + 0.691) / 10.0);
             weightSum += n;
         }
 
         if (weightSum <= 0.0) return SILENCE_LUFS;
-        return static_cast<float>(10.0 * std::log10(powerSum / weightSum));
+        return static_cast<float>(-0.691 + 10.0 * std::log10(powerSum / weightSum));
     }
 
     static inline float toLUFS(double meanPower) {
