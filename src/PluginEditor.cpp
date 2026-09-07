@@ -315,9 +315,11 @@ MultibandMeterRack::MultibandMeterRack() {
 }
 
 void MultibandMeterRack::updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
-                                     autolevel::dsp::TargetProfile profile)
+                                     autolevel::dsp::TargetProfile profile,
+                                     autolevel::dsp::SubWeight subWeight)
 {
     m_profile = profile;
+    m_subWeight = subWeight;
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float gr = gainReductions[b]; // Negative dB (0 to -12)
         m_currentGr[b] = gr;
@@ -374,10 +376,12 @@ void MultibandMeterRack::paint(juce::Graphics& g)
         float barW = std::min(colW - 8.0f, 34.0f);
         float barX = bx + (colW - barW) * 0.5f;
 
-        // Band Name at top
-        g.setColour(juce::Colour(0xffd0d7e2));
+        // Band Name at top (glows cyan with '+' indicator if Sub Weight is active)
+        bool isSubWithWeight = (b == 0 && m_subWeight != autolevel::dsp::SubWeight::OFF);
+        g.setColour(isSubWithWeight ? juce::Colour(0xff00e5ff) : juce::Colour(0xffd0d7e2));
         g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        g.drawText(juce::String(bandNames[static_cast<size_t>(b)].data()), static_cast<int>(bx), static_cast<int>(bounds.getY() + 5), static_cast<int>(colW), 16, juce::Justification::centred);
+        juce::String name = isSubWithWeight ? "SUB +" : juce::String(bandNames[static_cast<size_t>(b)].data());
+        g.drawText(name, static_cast<int>(bx), static_cast<int>(bounds.getY() + 5), static_cast<int>(colW), 16, juce::Justification::centred);
 
         // Meter Trough
         juce::Rectangle<float> trough(barX, meterTopY, barW, meterH);
@@ -532,6 +536,32 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupSpeedBtn(m_speedNormalBtn, 1);
     setupSpeedBtn(m_speedFastBtn, 2);
 
+    // Sub Weight Controls (Segmented header buttons in Card 4)
+    m_subWeightBox.addItem("Off", 1);
+    m_subWeightBox.addItem("Low", 2);
+    m_subWeightBox.addItem("Medium", 3);
+    m_subWeightBox.addItem("High", 4);
+    addChildComponent(m_subWeightBox);
+
+    m_subWeightLabel.setText("SUB WEIGHT:", juce::dontSendNotification);
+    m_subWeightLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_subWeightLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_subWeightLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(m_subWeightLabel);
+
+    auto setupSubWeightBtn = [this](juce::TextButton& btn, int index) {
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, index]() {
+            m_subWeightBox.setSelectedItemIndex(index, juce::sendNotificationSync);
+        };
+        addAndMakeVisible(btn);
+    };
+
+    setupSubWeightBtn(m_subWeightOffBtn, 0);
+    setupSubWeightBtn(m_subWeightLowBtn, 1);
+    setupSubWeightBtn(m_subWeightMedBtn, 2);
+    setupSubWeightBtn(m_subWeightHighBtn, 3);
+
     // APVTS Attachments
     auto& apvts = m_processor.getAPVTS();
     m_targetLufsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -546,6 +576,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_TARGET_PROFILE, m_profileBox);
     m_mbcSpeedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MBC_SPEED, m_mbcSpeedBox);
+    m_subWeightAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_SUB_WEIGHT, m_subWeightBox);
     m_maxBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MAX_BOOST, m_maxBoostSlider);
     m_maxCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -607,9 +639,16 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_speedNormalBtn.setToggleState(speedIdx == 1, juce::dontSendNotification);
     m_speedFastBtn.setToggleState(speedIdx == 2, juce::dontSendNotification);
 
+    // Sync Sub Weight segmented buttons
+    int subWeightIdx = m_subWeightBox.getSelectedItemIndex();
+    m_subWeightOffBtn.setToggleState(subWeightIdx == 0, juce::dontSendNotification);
+    m_subWeightLowBtn.setToggleState(subWeightIdx == 1, juce::dontSendNotification);
+    m_subWeightMedBtn.setToggleState(subWeightIdx == 2, juce::dontSendNotification);
+    m_subWeightHighBtn.setToggleState(subWeightIdx == 3, juce::dontSendNotification);
+
     // Update Visualizers
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
-    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile);
+    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeSubWeight);
 
     repaint();
 }
@@ -776,11 +815,18 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
     m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
 
+    // Sub Weight Controls inside Card 4 header
+    m_subWeightLabel.setBounds(230, 242, 82, 20);
+    m_subWeightOffBtn.setBounds(316, 242, 40, 20);
+    m_subWeightLowBtn.setBounds(360, 242, 44, 20);
+    m_subWeightMedBtn.setBounds(408, 242, 44, 20);
+    m_subWeightHighBtn.setBounds(456, 242, 48, 20);
+
     // MBC Speed Controls inside Card 4 header
-    m_mbcSpeedLabel.setBounds(495, 242, 85, 20);
-    m_speedSlowBtn.setBounds(585, 242, 68, 20);
-    m_speedNormalBtn.setBounds(658, 242, 76, 20);
-    m_speedFastBtn.setBounds(739, 242, 68, 20);
+    m_mbcSpeedLabel.setBounds(565, 242, 76, 20);
+    m_speedSlowBtn.setBounds(645, 242, 50, 20);
+    m_speedNormalBtn.setBounds(699, 242, 58, 20);
+    m_speedFastBtn.setBounds(761, 242, 50, 20);
 
     // 6-Band Meter Rack inside MBC Card
     m_meterRack.setBounds(26, 266, 788, 120);

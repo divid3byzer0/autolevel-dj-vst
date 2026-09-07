@@ -58,6 +58,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::StringArray{"Slow", "Normal", "Fast"},
         1)); // Default: Normal (middle)
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_SUB_WEIGHT, 1},
+        "Sub Weight",
+        juce::StringArray{"Off", "Low", "Medium", "High"},
+        0)); // Default: Off (backward compatible)
+
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_POST_MBC_GAIN, 1},
         "Post Gain",
@@ -99,6 +105,7 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_toneSlopeParam = m_apvts.getRawParameterValue(ID_TONE_SLOPE);
     m_targetProfileParam = m_apvts.getRawParameterValue(ID_TARGET_PROFILE);
     m_mbcSpeedParam = m_apvts.getRawParameterValue(ID_MBC_SPEED);
+    m_subWeightParam = m_apvts.getRawParameterValue(ID_SUB_WEIGHT);
     m_postMbcGainParam = m_apvts.getRawParameterValue(ID_POST_MBC_GAIN);
     m_ceilingDbParam = m_apvts.getRawParameterValue(ID_CEILING_DB);
     m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
@@ -163,6 +170,12 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     if (speedIdx == 0) params.mbcSpeed = autolevel::dsp::MBCSpeed::SLOW;
     else if (speedIdx == 2) params.mbcSpeed = autolevel::dsp::MBCSpeed::FAST;
     else params.mbcSpeed = autolevel::dsp::MBCSpeed::NORMAL;
+
+    int subWeightIdx = m_subWeightParam ? juce::roundToInt(m_subWeightParam->load()) : 0;
+    if (subWeightIdx == 1) params.subWeight = autolevel::dsp::SubWeight::LOW;
+    else if (subWeightIdx == 2) params.subWeight = autolevel::dsp::SubWeight::MED;
+    else if (subWeightIdx == 3) params.subWeight = autolevel::dsp::SubWeight::HIGH;
+    else params.subWeight = autolevel::dsp::SubWeight::OFF;
 
     params.postMbcGainDb = m_postMbcGainParam ? m_postMbcGainParam->load() : 0.0f;
     params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -1.5f;

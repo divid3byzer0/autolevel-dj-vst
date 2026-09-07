@@ -302,6 +302,74 @@ void testPostMbcGain() {
     std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
 }
 
+void testSubHarmonicWeightInjector() {
+    std::cout << "[TEST] Sub-Harmonic Weight Injector (pitch-locked sub-octave & adaptive suppression)..." << std::endl;
+    SubHarmonicSynthesizer synth;
+    double sampleRate = 48000.0;
+    synth.prepare(sampleRate);
+
+    // 1. Test OFF bypass: signal must remain 100% bit-identical
+    size_t n = 4800; // 100ms
+    std::vector<float> origL(n), origR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
+        origL[i] = s;
+        origR[i] = s;
+    }
+    std::vector<float> passL = origL;
+    std::vector<float> passR = origR;
+    synth.process(passL.data(), passR.data(), n, SubWeight::OFF);
+    for (size_t i = 0; i < n; ++i) {
+        assert(passL[i] == origL[i]);
+        assert(passR[i] == origR[i]);
+    }
+    std::cout << "  -> PASS: SubWeight::OFF is 100% bit-identical bypass." << std::endl;
+
+    // 2. Test sub-octave generation on a 70 Hz vintage bass note (zero native 35 Hz content)
+    synth.reset();
+    std::vector<float> bass70L(n), bass70R(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 70.0 * i / sampleRate));
+        bass70L[i] = s;
+        bass70R[i] = s;
+    }
+    synth.process(bass70L.data(), bass70R.data(), n, SubWeight::MED);
+
+    // Measure discrete Fourier coefficient at 35 Hz (half frequency, one octave down)
+    double sumSin35 = 0.0, sumCos35 = 0.0;
+    for (size_t i = 2400; i < n; ++i) {
+        double phase = 2.0 * TEST_PI * 35.0 * i / sampleRate;
+        sumSin35 += bass70L[i] * std::sin(phase);
+        sumCos35 += bass70L[i] * std::cos(phase);
+    }
+    double mag35Hz = (2.0 / 2400.0) * std::sqrt(sumSin35 * sumSin35 + sumCos35 * sumCos35);
+    std::cout << "  Input 70 Hz bass tone -> Generated 35 Hz sub-harmonic magnitude: " << mag35Hz << std::endl;
+    assert(mag35Hz > 0.05); // Clean, robust sub-octave detected!
+    std::cout << "  -> PASS: 35 Hz pitch-locked sub-harmonic generated cleanly from 70 Hz bass." << std::endl;
+
+    // 3. Test adaptive suppression: when a modern track already has heavy 35 Hz native sub
+    synth.reset();
+    std::vector<float> modernL(n), modernR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float nativeSub = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 35.0 * i / sampleRate));
+        float bass = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 70.0 * i / sampleRate));
+        modernL[i] = nativeSub + bass;
+        modernR[i] = nativeSub + bass;
+    }
+    std::vector<float> modernCopyL = modernL;
+    std::vector<float> modernCopyR = modernR;
+    synth.process(modernL.data(), modernR.data(), n, SubWeight::MED);
+
+    // Injected energy on modern track should be heavily attenuated compared to thin track
+    double maxDiff = 0.0;
+    for (size_t i = 2400; i < n; ++i) {
+        maxDiff = std::max(maxDiff, static_cast<double>(std::abs(modernL[i] - modernCopyL[i])));
+    }
+    std::cout << "  Adaptive suppression injected amplitude on heavy modern sub: " << maxDiff << std::endl;
+    assert(maxDiff < 0.10); // Automatically suppressed so it won't overload subs
+    std::cout << "  -> PASS: Adaptive energy sensor protects tracks with existing sub-bass from mud." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -314,6 +382,7 @@ int main() {
     testEbuR128DynamicLoudness();
     testMbcSpeedBallistics();
     testPostMbcGain();
+    testSubHarmonicWeightInjector();
     testFullChain();
 
     std::cout << "============================================" << std::endl;

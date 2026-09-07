@@ -2,6 +2,7 @@
 
 #include "LoudnessMeter.h"
 #include "Leveler.h"
+#include "SubHarmonicSynthesizer.h"
 #include "MultibandCompressor.h"
 #include "SafetyLimiter.h"
 #include <atomic>
@@ -18,6 +19,7 @@ struct EngineParameters {
     float toneSlopeDbPerOctave = -2.0f; // -6.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
+    SubWeight subWeight = SubWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
     float ceilingDb = -1.5f;
@@ -35,6 +37,7 @@ struct EngineVisualState {
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
+    SubWeight activeSubWeight = SubWeight::OFF;
     float activeToneSlope = -2.0f;
     float postMbcGainDb = 0.0f;
 };
@@ -47,6 +50,7 @@ public:
         m_sampleRate = sampleRate;
         m_loudnessMeter.prepare(sampleRate);
         m_leveler.prepare(sampleRate);
+        m_subHarmonics.prepare(sampleRate);
         m_mbc.prepare(sampleRate);
         m_limiter.prepare(sampleRate);
         reset();
@@ -55,12 +59,13 @@ public:
     void reset() {
         m_loudnessMeter.reset();
         m_leveler.reset();
+        m_subHarmonics.reset();
         m_mbc.reset();
         m_limiter.reset();
     }
 
     /**
-     * Exact chain: AGC (Makeup Gain) -> Multiband Compressor (MBC) -> Limiter
+     * Exact chain: AGC -> Sub-Harmonics -> Multiband Compressor (MBC) -> Post-Gain -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         if (params.bypass || numSamples == 0) {
@@ -84,6 +89,9 @@ public:
 
         // 3. Stage 1: AGC Makeup Gain applied to audio
         m_leveler.processBlock(left, right, numSamples);
+
+        // 3.5. Stage 1.5: Sub-Harmonic Weight Injector (clean mono sub-octave)
+        m_subHarmonics.process(left, right, numSamples, params.subWeight);
 
         // 4. Stage 2: 6-band Multiband Dynamic Tone Shaper (thresholds linked to tone curve & profile)
         MBCParams mbcParams;
@@ -121,6 +129,7 @@ public:
         m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         m_visualState.activeProfile = params.targetProfile;
         m_visualState.activeMbcSpeed = params.mbcSpeed;
+        m_visualState.activeSubWeight = params.subWeight;
         m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
         m_visualState.postMbcGainDb = params.postMbcGainDb;
     }
@@ -133,6 +142,7 @@ private:
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
+    SubHarmonicSynthesizer m_subHarmonics;
     MultibandCompressor m_mbc;
     SafetyLimiter m_limiter;
 
