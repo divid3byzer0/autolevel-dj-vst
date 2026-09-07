@@ -328,12 +328,12 @@ void MultibandMeterRack::updateMeters(const std::array<float, autolevel::dsp::Ba
 
         if (gr < m_peakGr[b]) { // Greater reduction
             m_peakGr[b] = gr;
-            m_peakHoldTimers[b] = 18; // ~600ms hold at 30Hz
+            m_peakHoldTimers[b] = 36; // ~600ms hold at 60Hz
         } else {
             if (m_peakHoldTimers[b] > 0) {
                 --m_peakHoldTimers[b];
             } else {
-                m_peakGr[b] = std::min(0.0f, m_peakGr[b] + 0.35f); // Smooth decay
+                m_peakGr[b] = std::min(0.0f, m_peakGr[b] + 0.18f); // Smooth decay at 60Hz
             }
         }
     }
@@ -622,7 +622,7 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_BYPASS, m_bypassButton);
 
-    startTimerHz(30);
+    startTimerHz(60);
 }
 
 AutoLevelDJAudioProcessorEditor::~AutoLevelDJAudioProcessorEditor() {
@@ -683,6 +683,12 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_airExciterLowBtn.setToggleState(airIdx == 1, juce::dontSendNotification);
     m_airExciterMedBtn.setToggleState(airIdx == 2, juce::dontSendNotification);
     m_airExciterHighBtn.setToggleState(airIdx == 3, juce::dontSendNotification);
+
+    // Track maximum peak-held limiter gain reduction
+    float curLimGr = m_latestState.limiterGainReductionDb;
+    if (curLimGr < m_maxHeldLimiterGrDb) {
+        m_maxHeldLimiterGrDb = curLimGr;
+    }
 
     // Update Visualizers
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
@@ -942,17 +948,18 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     g.drawText("OUT / GR", static_cast<int>(meterBoxX), static_cast<int>(meterBoxY + 6.0f),
                static_cast<int>(meterBoxW), 14, juce::Justification::centred);
 
-    // 2. Limiter Gain Reduction Readout Badge
-    float limGr = m_latestState.limiterGainReductionDb; // 0.0 to negative dB
+    // 2. Limiter Gain Reduction Readout Badge (Displays Peak-Held Max GR, Click to Reset)
+    float heldGr = m_maxHeldLimiterGrDb;
+    float curGr = m_latestState.limiterGainReductionDb;
     juce::Rectangle<float> grBadge(meterBoxX + 6.0f, meterBoxY + 22.0f, meterBoxW - 12.0f, 18.0f);
-    if (limGr < -0.05f) {
-        g.setColour(juce::Colour(0xff2a161b));
+    if (heldGr < -0.05f) {
+        g.setColour(juce::Colour(0xff2a141b));
         g.fillRoundedRectangle(grBadge, 3.0f);
         g.setColour(juce::Colour(0xffff3366));
         g.drawRoundedRectangle(grBadge, 3.0f, 1.0f);
         g.setColour(juce::Colour(0xffff3366));
         g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
-        g.drawText(juce::String(limGr, 1) + " dB", grBadge, juce::Justification::centred);
+        g.drawText(juce::String(heldGr, 1) + " dB", grBadge, juce::Justification::centred);
     } else {
         g.setColour(juce::Colour(0xff10141d));
         g.fillRoundedRectangle(grBadge, 3.0f);
@@ -967,35 +974,44 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     float barTopY = meterBoxY + 44.0f;
     float barH = 154.0f;
 
-    // A. Limiter GR Meter (deflects downward from top, 0 to -6 dB)
+    // A. Limiter GR Meter (deflects DOWNWARD from top, 0 to -6 dB)
     float grBarX = meterBoxX + 8.0f;
-    float grBarW = 7.0f;
+    float grBarW = 12.0f;
     juce::Rectangle<float> grTrough(grBarX, barTopY, grBarW, barH);
     g.setColour(juce::Colour(0xff090b10));
     g.fillRoundedRectangle(grTrough, 2.0f);
     g.setColour(juce::Colour(0xff1a212d));
     g.drawRoundedRectangle(grTrough, 2.0f, 1.0f);
 
-    float normLimGr = std::clamp(-limGr / 6.0f, 0.0f, 1.0f);
+    // Downward deflection fill (0 dB at top down to -6 dB at bottom)
+    float normLimGr = std::clamp(-curGr / 6.0f, 0.0f, 1.0f);
     if (normLimGr > 0.01f) {
         float grFillH = normLimGr * (barH - 2.0f);
         juce::Rectangle<float> grFill(grBarX + 1.0f, barTopY + 1.0f, grBarW - 2.0f, grFillH);
-        juce::ColourGradient grGrad(juce::Colour(0xffffb300), grBarX, barTopY,
+        juce::ColourGradient grGrad(juce::Colour(0xffffea00), grBarX, barTopY,
                                     juce::Colour(0xffff3366), grBarX, barTopY + grFillH, false);
         g.setGradientFill(grGrad);
         g.fillRoundedRectangle(grFill, 1.5f);
     }
 
+    // Peak-held line on GR bar (shows max reduction visually)
+    float normHeldGr = std::clamp(-heldGr / 6.0f, 0.0f, 1.0f);
+    if (normHeldGr > 0.015f) {
+        float heldY = barTopY + 1.0f + normHeldGr * (barH - 3.0f);
+        g.setColour(juce::Colour(0xffff3366));
+        g.fillRect(grBarX + 1.0f, heldY, grBarW - 2.0f, 2.0f);
+    }
+
     // Label for GR bar below
-    g.setColour((limGr < -0.05f) ? juce::Colour(0xffff3366) : juce::Colour(0xff556272));
-    g.setFont(juce::FontOptions(8.0f, juce::Font::bold));
+    g.setColour((curGr < -0.05f) ? juce::Colour(0xffff3366) : juce::Colour(0xff556272));
+    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
     g.drawText("GR", static_cast<int>(grBarX - 2.0f), static_cast<int>(barTopY + barH + 2.0f),
                static_cast<int>(grBarW + 4.0f), 10, juce::Justification::centred);
 
     // B. Master Peak Meters (L & R)
-    float lBarX = meterBoxX + 23.0f;
-    float rBarX = meterBoxX + 35.0f;
-    float peakBarW = 10.0f;
+    float lBarX = meterBoxX + 26.0f;
+    float rBarX = meterBoxX + 38.0f;
+    float peakBarW = 9.0f;
 
     juce::Rectangle<float> lTrough(lBarX, barTopY, peakBarW, barH);
     juce::Rectangle<float> rTrough(rBarX, barTopY, peakBarW, barH);
@@ -1019,6 +1035,7 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
             float fillY = barTopY + barH - 1.0f - fillH;
             juce::Rectangle<float> fill(x + 1.0f, fillY, w - 2.0f, fillH);
 
+            // Three-tier color: Ice-Cyan (< -12 dB), Amber (-12 to -3 dB), Red (> -3 dB)
             juce::Colour topCol = (peakDb > -3.0f) ? juce::Colour(0xffff3366) :
                                   (peakDb > -12.0f) ? juce::Colour(0xffffb300) : juce::Colour(0xff00e5ff);
             juce::Colour botCol = juce::Colour(0xff00e5ff).withAlpha(0.6f);
@@ -1054,7 +1071,7 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.drawHorizontalLine(static_cast<int>(ty), rBarX + peakBarW + 2.0f, meterBoxX + meterBoxW - 4.0f);
         g.setColour((t == 0.0f) ? juce::Colour(0xffff3366) : juce::Colour(0xff657283));
         juce::String tStr = (t == 0.0f) ? "0" : juce::String(static_cast<int>(t));
-        g.drawText(tStr, static_cast<int>(meterBoxX + 48.0f), static_cast<int>(ty - 5.0f), 32, 10, juce::Justification::centredLeft);
+        g.drawText(tStr, static_cast<int>(meterBoxX + 50.0f), static_cast<int>(ty - 5.0f), 30, 10, juce::Justification::centredLeft);
     }
 
     // 4. Max Peak Numeric Readout at bottom
@@ -1064,6 +1081,24 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
     g.drawText(peakStr, static_cast<int>(meterBoxX + 4.0f), static_cast<int>(meterBoxY + meterBoxH - 16.0f),
                static_cast<int>(meterBoxW - 8.0f), 12, juce::Justification::centred);
+}
+
+void AutoLevelDJAudioProcessorEditor::mouseDown(const juce::MouseEvent& e) {
+    // Click on OUT / GR meter panel resets the peak-held maximum gain reduction
+    juce::Rectangle<int> grClickArea(726, 418, 84, 220);
+    if (grClickArea.contains(e.getPosition())) {
+        m_maxHeldLimiterGrDb = m_latestState.limiterGainReductionDb; // Reset peak hold to current reduction
+        repaint();
+    }
+}
+
+void AutoLevelDJAudioProcessorEditor::mouseMove(const juce::MouseEvent& e) {
+    juce::Rectangle<int> grBadgeArea(732, 440, 72, 22);
+    if (grBadgeArea.contains(e.getPosition())) {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    } else {
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+    }
 }
 
 void AutoLevelDJAudioProcessorEditor::resized() {

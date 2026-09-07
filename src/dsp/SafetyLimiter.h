@@ -40,6 +40,8 @@ public:
         const double thresholdLin = m_ceilingLin;
         const double thresholdDb = m_ceilingDb;
 
+        float blockMinGrDb = 0.0f;
+
         for (size_t i = 0; i < numSamples; ++i) {
             float inL = left[i];
             float inR = right[i];
@@ -65,18 +67,34 @@ public:
             float outR = inR * gainLin;
 
             // Strict ceiling clamp for absolute DAC/amp clip safety
+            float preClampMax = std::max(std::abs(outL), std::abs(outR));
             outL = std::clamp(outL, -m_ceilingLin, m_ceilingLin);
             outR = std::clamp(outR, -m_ceilingLin, m_ceilingLin);
+            float postClampMax = std::max(std::abs(outL), std::abs(outR));
+
+            // If ceiling clamp engaged, account for it in total gain reduction
+            if (preClampMax > m_ceilingLin && postClampMax > 0.0f) {
+                double clampGrDb = 20.0 * std::log10(static_cast<double>(postClampMax) / static_cast<double>(preClampMax));
+                if (clampGrDb < grDb) {
+                    grDb = clampGrDb;
+                }
+            }
 
             left[i] = outL;
             right[i] = outR;
 
-            float currentGrDb = static_cast<float>(grDb);
-            if (currentGrDb < m_gainReductionDb) {
-                m_gainReductionDb = currentGrDb;
-            } else {
-                m_gainReductionDb += (0.0f - m_gainReductionDb) * 0.002f;
+            float sampleGrDb = static_cast<float>(grDb);
+            if (sampleGrDb < blockMinGrDb) {
+                blockMinGrDb = sampleGrDb;
             }
+        }
+
+        // Instant attack to catch all micro-transients; smooth ~16 dB/sec release for fluid visual metering
+        if (blockMinGrDb < m_gainReductionDb) {
+            m_gainReductionDb = blockMinGrDb;
+        } else {
+            float dtSeconds = static_cast<float>(numSamples) / static_cast<float>(m_sampleRate);
+            m_gainReductionDb = std::min(0.0f, m_gainReductionDb + dtSeconds * 16.0f);
         }
     }
 

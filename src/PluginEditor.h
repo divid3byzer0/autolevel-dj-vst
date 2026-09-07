@@ -86,6 +86,8 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
 
 private:
     void timerCallback() override;
@@ -175,6 +177,7 @@ private:
     juce::TextButton m_resetButton{"RESET SET / INTEGRATION"};
 
     autolevel::dsp::EngineVisualState m_latestState;
+    float m_maxHeldLimiterGrDb = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AutoLevelDJAudioProcessorEditor)
 };
