@@ -5,15 +5,22 @@
 
 namespace autolevel::dsp {
 
+/**
+ * Safety Limiter matching Android DynamicsProcessing.Limiter:
+ * - Attack time = 1.0 ms
+ * - Release time = 60.0 ms
+ * - Ratio = 20:1
+ * - Threshold = -1.5 dBFS (or user ceiling knob)
+ */
 class SafetyLimiter {
 public:
     SafetyLimiter() = default;
 
     void prepare(double sampleRate) {
         m_sampleRate = sampleRate;
-        // Fast attack ~ 0.2 ms
-        m_attackCoeff = std::exp(-1.0 / (sampleRate * 0.0002));
-        // Musical release ~ 60 ms
+        // Exact 1.0 ms attack
+        m_attackCoeff = std::exp(-1.0 / (sampleRate * 0.001));
+        // Exact 60.0 ms release
         m_releaseCoeff = std::exp(-1.0 / (sampleRate * 0.060));
         reset();
     }
@@ -29,6 +36,10 @@ public:
     }
 
     void process(float* left, float* right, size_t numSamples) {
+        constexpr double ratio = 20.0; // 20:1 limiter ratio from Android
+        const double thresholdLin = m_ceilingLin;
+        const double thresholdDb = m_ceilingDb;
+
         for (size_t i = 0; i < numSamples; ++i) {
             float inL = left[i];
             float inR = right[i];
@@ -40,27 +51,31 @@ public:
                 m_envelope = peak + m_releaseCoeff * (m_envelope - peak);
             }
 
-            double gainLin = 1.0;
-            if (m_envelope > m_ceilingLin) {
-                gainLin = m_ceilingLin / m_envelope;
+            double grDb = 0.0;
+            if (m_envelope > thresholdLin) {
+                double envDb = 20.0 * std::log10(m_envelope);
+                double overDb = envDb - thresholdDb;
+                // 20:1 compression ratio
+                grDb = -overDb * (1.0 - 1.0 / ratio);
             }
 
-            // Soft-saturation safety clamp if a massive sudden transient passes before envelope settles
-            float outL = static_cast<float>(inL * gainLin);
-            float outR = static_cast<float>(inR * gainLin);
+            float gainLin = (grDb < 0.0) ? static_cast<float>(std::pow(10.0, grDb / 20.0)) : 1.0f;
 
-            // Hard clamp at ceiling to 100% guarantee no DAC/amp clipping
+            float outL = inL * gainLin;
+            float outR = inR * gainLin;
+
+            // Strict ceiling clamp for absolute DAC/amp clip safety
             outL = std::clamp(outL, -m_ceilingLin, m_ceilingLin);
             outR = std::clamp(outR, -m_ceilingLin, m_ceilingLin);
 
             left[i] = outL;
             right[i] = outR;
 
-            float currentGrDb = (gainLin < 1.0) ? static_cast<float>(20.0 * std::log10(gainLin)) : 0.0f;
+            float currentGrDb = static_cast<float>(grDb);
             if (currentGrDb < m_gainReductionDb) {
                 m_gainReductionDb = currentGrDb;
             } else {
-                m_gainReductionDb += (0.0f - m_gainReductionDb) * 0.001f;
+                m_gainReductionDb += (0.0f - m_gainReductionDb) * 0.002f;
             }
         }
     }
@@ -74,8 +89,8 @@ private:
     double m_attackCoeff = 0.0;
     double m_releaseCoeff = 0.0;
     double m_envelope = 0.0;
-    float m_ceilingDb = -0.5f;
-    float m_ceilingLin = 0.944060876f;
+    float m_ceilingDb = -1.5f; // -1.5 dBFS default matching Android
+    float m_ceilingLin = 0.84139514f;
     float m_gainReductionDb = 0.0f;
 };
 

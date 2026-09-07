@@ -7,15 +7,22 @@
 namespace autolevel::dsp {
 
 struct LevelerParams {
-    float targetLUFS = -9.0f;       // DJ club standard level
-    float maxBoostDb = 6.0f;        // Maximum boost allowed
-    float maxCutDb = 12.0f;         // Maximum attenuation allowed
-    float baseSlewDbPerSec = 0.75f; // Steady-state upward slew rate (dB/sec)
+    float targetLUFS = -9.0f;       // DJ club target level (-9.0) or streaming (-18.0)
+    float maxBoostDb = 12.0f;       // Maximum boost (12 dB default from Android)
+    float maxCutDb = 12.0f;         // Maximum attenuation (12 dB default from Android)
     bool freezeBreakdowns = true;   // Don't boost into breakdowns
     float breakdownThresholdLU = 7.0f; // LU drop below integrated to trigger freeze
     bool enabled = true;
 };
 
+/**
+ * Leveler matching Android Leveler.kt:
+ * - Asymmetric slew:
+ *     Fast lock (first 8 s): 4.0 dB/s base, 4x downward multiplier (16 dB/s)
+ *     Steady state: 0.75 dB/s base, 2x downward multiplier (1.5 dB/s)
+ * - Online gated mean from 1 dB histogram
+ * - Smooth block interpolation
+ */
 class Leveler {
 public:
     Leveler() = default;
@@ -35,13 +42,11 @@ public:
 
     void update(const LevelerParams& params, const LoudnessReadings& readings, size_t blocksIntegrated, float dtSeconds) {
         if (!params.enabled || readings.integratedLUFS <= ABSOLUTE_GATE_LUFS || blocksIntegrated < 5) {
-            // Not enough signal to adapt yet, hold current gain
             m_targetGainDb = m_currentGainDb;
             return;
         }
 
-        // Check breakdown freeze: if momentary is significantly quieter than integrated,
-        // we are in a breakdown, buildup, or quiet intro/outro. Freeze gain boost!
+        // Breakdown detection: if momentary is significantly quieter than integrated, freeze upward boost
         bool breakdown = false;
         if (params.freezeBreakdowns) {
             float delta = readings.integratedLUFS - readings.momentaryLUFS;
@@ -51,33 +56,34 @@ public:
         }
         m_isFrozen = breakdown;
 
-        // Desired correction = Target - Integrated
+        // Desired correction = target - integrated
         float rawDesired = params.targetLUFS - readings.integratedLUFS;
         float clampedDesired = std::clamp(rawDesired, -params.maxCutDb, params.maxBoostDb);
 
-        // If frozen in a breakdown, only allow cut (downwards), never boost (upwards)
         if (m_isFrozen && clampedDesired > m_currentGainDb) {
-            m_targetGainDb = m_currentGainDb;
+            m_targetGainDb = m_currentGainDb; // Hold gain during breakdown
         } else {
             m_targetGainDb = clampedDesired;
         }
 
-        // Asymmetric slew rate computation
-        bool isFastLock = (m_fastLockTimerMs < 8000); // First 8 seconds of track
+        // Fast lock for initial 8 seconds of track (from Android Leveler.kt)
+        constexpr long FAST_LOCK_MS = 8000;
+        constexpr float FAST_SLEW_DB_S = 4.0f;
+        constexpr float SLOW_SLEW_DB_S = 0.75f;
+        constexpr float FAST_DOWN_MULTIPLIER = 4.0f;
+        constexpr float SLOW_DOWN_MULTIPLIER = 2.0f;
+
+        bool isFastLock = (m_fastLockTimerMs < FAST_LOCK_MS);
         if (isFastLock) {
             m_fastLockTimerMs += static_cast<long>(dtSeconds * 1000.0f);
         }
 
-        float baseRate = isFastLock ? 4.0f : params.baseSlewDbPerSec;
-        float slewRate = baseRate;
+        float base = isFastLock ? FAST_SLEW_DB_S : SLOW_SLEW_DB_S;
+        float rate = (m_targetGainDb < m_currentGainDb)
+            ? base * (isFastLock ? FAST_DOWN_MULTIPLIER : SLOW_DOWN_MULTIPLIER)
+            : base;
 
-        if (m_targetGainDb < m_currentGainDb) {
-            // Gain reduction is faster to prevent blasting sound systems
-            float downMultiplier = isFastLock ? 4.0f : 2.5f;
-            slewRate = baseRate * downMultiplier;
-        }
-
-        float maxStep = slewRate * dtSeconds;
+        float maxStep = rate * dtSeconds;
         if (m_targetGainDb > m_currentGainDb) {
             m_currentGainDb = std::min(m_currentGainDb + maxStep, m_targetGainDb);
         } else if (m_targetGainDb < m_currentGainDb) {
@@ -85,9 +91,6 @@ public:
         }
     }
 
-    /**
-     * Apply the slew-limited gain smoothly across an audio block to avoid clicks.
-     */
     void processBlock(float* left, float* right, size_t numSamples) {
         float targetLin = std::pow(10.0f, m_currentGainDb / 20.0f);
         float step = (targetLin - m_smoothGainLin) / static_cast<float>(std::max<size_t>(1, numSamples));

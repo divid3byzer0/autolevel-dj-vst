@@ -14,8 +14,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_MAX_BOOST, 1},
         "Max Boost",
-        juce::NormalisableRange<float>(0.0f, 12.0f, 0.5f),
-        6.0f,
+        juce::NormalisableRange<float>(0.0f, 18.0f, 0.5f),
+        12.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -25,37 +25,44 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         12.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
-    params.push_back(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID{ID_SLEW_SPEED, 1},
-        "Slew Speed",
-        juce::StringArray{"Slow (0.5 dB/s)", "Normal (0.75 dB/s)", "Fast (1.5 dB/s)"},
-        1));
-
-    params.push_back(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID{ID_FREEZE_BREAKDOWNS, 1},
-        "Freeze Breakdowns",
-        true));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ID_LEVEL_RESPONSE, 1},
+        "Level Response",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.25f,
+        juce::AudioParameterFloatAttributes().withLabel("%")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_COMPRESSION_AMOUNT, 1},
-        "Tone Shaping (MBC)",
+        "Compression",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.50f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_TONE_SLOPE, 1},
-        "Tonal Slope",
-        juce::NormalisableRange<float>(-5.0f, -2.5f, 0.05f),
-        -3.75f,
+        "Tone Slope",
+        juce::NormalisableRange<float>(-6.0f, 0.0f, 0.1f),
+        -2.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB/oct")));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_TARGET_PROFILE, 1},
+        "Target Profile",
+        juce::StringArray{"Pink Noise (Linear)", "Modern Mix (Contoured)"},
+        1)); // Default: Modern Mix
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_CEILING_DB, 1},
-        "Ceiling (Limiter)",
-        juce::NormalisableRange<float>(-2.0f, 0.0f, 0.1f),
-        -0.5f,
+        "Limiter Ceiling",
+        juce::NormalisableRange<float>(-3.0f, 0.0f, 0.1f),
+        -1.5f,
         juce::AudioParameterFloatAttributes().withLabel("dBFS")));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{ID_FREEZE_BREAKDOWNS, 1},
+        "Freeze Breakdowns",
+        true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{ID_BYPASS, 1},
@@ -74,11 +81,12 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_targetLufsParam = m_apvts.getRawParameterValue(ID_TARGET_LUFS);
     m_maxBoostParam = m_apvts.getRawParameterValue(ID_MAX_BOOST);
     m_maxCutParam = m_apvts.getRawParameterValue(ID_MAX_CUT);
-    m_slewSpeedParam = m_apvts.getRawParameterValue(ID_SLEW_SPEED);
-    m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
+    m_levelResponseParam = m_apvts.getRawParameterValue(ID_LEVEL_RESPONSE);
     m_compressionAmountParam = m_apvts.getRawParameterValue(ID_COMPRESSION_AMOUNT);
     m_toneSlopeParam = m_apvts.getRawParameterValue(ID_TONE_SLOPE);
+    m_targetProfileParam = m_apvts.getRawParameterValue(ID_TARGET_PROFILE);
     m_ceilingDbParam = m_apvts.getRawParameterValue(ID_CEILING_DB);
+    m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
     m_bypassParam = m_apvts.getRawParameterValue(ID_BYPASS);
 }
 
@@ -125,18 +133,19 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     autolevel::dsp::EngineParameters params;
     params.targetLUFS = m_targetLufsParam ? m_targetLufsParam->load() : -9.0f;
-    params.maxBoostDb = m_maxBoostParam ? m_maxBoostParam->load() : 6.0f;
+    params.maxBoostDb = m_maxBoostParam ? m_maxBoostParam->load() : 12.0f;
     params.maxCutDb = m_maxCutParam ? m_maxCutParam->load() : 12.0f;
-
-    int speedIdx = m_slewSpeedParam ? static_cast<int>(m_slewSpeedParam->load()) : 1;
-    if (speedIdx == 0) params.slewSpeedDbPerSec = 0.5f;
-    else if (speedIdx == 2) params.slewSpeedDbPerSec = 1.5f;
-    else params.slewSpeedDbPerSec = 0.75f;
-
-    params.freezeBreakdowns = m_freezeBreakdownsParam ? (m_freezeBreakdownsParam->load() > 0.5f) : true;
+    params.levelResponse = m_levelResponseParam ? m_levelResponseParam->load() : 0.25f;
     params.compressionAmount = m_compressionAmountParam ? m_compressionAmountParam->load() : 0.5f;
-    params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -3.75f;
-    params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -0.5f;
+    params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -2.0f;
+
+    int profileIdx = m_targetProfileParam ? static_cast<int>(m_targetProfileParam->load()) : 1;
+    params.targetProfile = (profileIdx == 0)
+        ? autolevel::dsp::TargetProfile::PINK_NOISE
+        : autolevel::dsp::TargetProfile::MODERN_MIX;
+
+    params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -1.5f;
+    params.freezeBreakdowns = m_freezeBreakdownsParam ? (m_freezeBreakdownsParam->load() > 0.5f) : true;
     params.bypass = m_bypassParam ? (m_bypassParam->load() > 0.5f) : false;
 
     float* left = buffer.getWritePointer(0);

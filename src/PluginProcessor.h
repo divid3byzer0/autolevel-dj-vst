@@ -45,11 +45,12 @@ public:
     static constexpr const char* ID_TARGET_LUFS = "target_lufs";
     static constexpr const char* ID_MAX_BOOST = "max_boost";
     static constexpr const char* ID_MAX_CUT = "max_cut";
-    static constexpr const char* ID_SLEW_SPEED = "slew_speed";
-    static constexpr const char* ID_FREEZE_BREAKDOWNS = "freeze_breakdowns";
+    static constexpr const char* ID_LEVEL_RESPONSE = "level_response";
     static constexpr const char* ID_COMPRESSION_AMOUNT = "compression_amount";
     static constexpr const char* ID_TONE_SLOPE = "tone_slope";
+    static constexpr const char* ID_TARGET_PROFILE = "target_profile";
     static constexpr const char* ID_CEILING_DB = "ceiling_db";
+    static constexpr const char* ID_FREEZE_BREAKDOWNS = "freeze_breakdowns";
     static constexpr const char* ID_BYPASS = "bypass";
 
 private:
@@ -60,11 +61,12 @@ private:
     std::atomic<float>* m_targetLufsParam = nullptr;
     std::atomic<float>* m_maxBoostParam = nullptr;
     std::atomic<float>* m_maxCutParam = nullptr;
-    std::atomic<float>* m_slewSpeedParam = nullptr;
-    std::atomic<float>* m_freezeBreakdownsParam = nullptr;
+    std::atomic<float>* m_levelResponseParam = nullptr;
     std::atomic<float>* m_compressionAmountParam = nullptr;
     std::atomic<float>* m_toneSlopeParam = nullptr;
+    std::atomic<float>* m_targetProfileParam = nullptr;
     std::atomic<float>* m_ceilingDbParam = nullptr;
+    std::atomic<float>* m_freezeBreakdownsParam = nullptr;
     std::atomic<float>* m_bypassParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AutoLevelDJAudioProcessor)

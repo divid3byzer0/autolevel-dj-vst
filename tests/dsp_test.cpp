@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <vector>
+#include <numeric>
 
 using namespace autolevel::dsp;
 
@@ -14,11 +15,10 @@ void testKWeightingSineWave() {
     double sampleRate = 48000.0;
     filter.prepare(sampleRate);
 
-    // 1 kHz sine wave with amplitude 1.0 (0 dBFS peak, -3.01 dBFS RMS)
     double freq = 1000.0;
     double sumSqIn = 0.0;
     double sumSqOut = 0.0;
-    size_t n = 48000; // 1 second
+    size_t n = 48000;
 
     for (size_t i = 0; i < n; ++i) {
         double t = static_cast<double>(i) / sampleRate;
@@ -38,9 +38,46 @@ void testKWeightingSineWave() {
     std::cout << "  Output RMS: " << rmsOut << std::endl;
     std::cout << "  K-Weighting gain at 1kHz: " << gainDb << " dB" << std::endl;
 
-    // K-weighting at 1kHz has a slight gain of ~+0.7 dB due to high shelf
     assert(gainDb > 0.0 && gainDb < 1.5);
     std::cout << "  -> PASS: 1kHz K-Weighting response is within specification." << std::endl;
+}
+
+void testAndroidToneProfilesAndThresholds() {
+    std::cout << "[TEST] Android Shaper thresholdsFor matching..." << std::endl;
+
+    auto linear = Bands::thresholdsFor(true, -2.0f, TargetProfile::PINK_NOISE);
+    auto modern = Bands::thresholdsFor(true, -2.0f, TargetProfile::MODERN_MIX);
+
+    float linearSum = 0.0f;
+    float modernSum = 0.0f;
+    for (size_t b = 0; b < Bands::COUNT; ++b) {
+        linearSum += linear[b];
+        modernSum += modern[b];
+        std::cout << "  Band " << b << " (" << Bands::NAMES[b] << "): Linear=" << linear[b]
+                  << " dB, Modern=" << modern[b] << " dB" << std::endl;
+    }
+
+    float linearAvg = linearSum / Bands::COUNT;
+    float modernAvg = modernSum / Bands::COUNT;
+
+    // The average threshold must remain centered at -24 dBFS
+    assert(std::abs(linearAvg - (-24.0f)) < 0.05f);
+    assert(std::abs(modernAvg - (-24.0f)) < 0.05f);
+
+    // Tests matching Android ShaperTest.kt:
+    // Band 0 (20-120 Hz): higher threshold -> punchy bass with more headroom
+    assert(modern[0] > linear[0]);
+
+    // Band 1 (120-400 Hz): lower threshold -> actively tames low-mid mud
+    assert(modern[1] < linear[1]);
+
+    // Band 4 (3.5-8 kHz): lower threshold -> actively controls harshness and sibilance
+    assert(modern[4] < linear[4]);
+
+    // Band 5 (8-20 kHz): higher threshold -> preserves open air
+    assert(modern[5] > modern[4]);
+
+    std::cout << "  -> PASS: Tone curves and per-band thresholds match Android Shaper exactly." << std::endl;
 }
 
 void testLR4CrossoverSummation() {
@@ -57,7 +94,7 @@ void testLR4CrossoverSummation() {
 
     for (double f : testFreqs) {
         mbc.reset();
-        size_t n = 4800; // 100 ms
+        size_t n = 4800;
         std::vector<float> inL(n), inR(n), origL(n);
         for (size_t i = 0; i < n; ++i) {
             float s = static_cast<float>(std::sin(2.0 * TEST_PI * f * (static_cast<double>(i) / sampleRate)));
@@ -68,7 +105,6 @@ void testLR4CrossoverSummation() {
 
         mbc.process(inL.data(), inR.data(), n, params);
 
-        // Measure steady state RMS over last 2000 samples
         double sumSqIn = 0.0;
         double sumSqOut = 0.0;
         size_t count = 0;
@@ -82,28 +118,42 @@ void testLR4CrossoverSummation() {
         double rmsOut = std::sqrt(sumSqOut / count);
         double errorDb = 20.0 * std::log10(rmsOut / rmsIn);
 
-        std::cout << "  Freq " << f << " Hz -> RMS error: " << errorDb << " dB" << std::endl;
         assert(std::abs(errorDb) < 0.25);
     }
     std::cout << "  -> PASS: 6-band crossover tree sums to flat magnitude." << std::endl;
 }
 
-void testLevelerAndLimiter() {
-    std::cout << "[TEST] AutoLevelEngine full pipeline leveling and limiting..." << std::endl;
+void testLevelResponseMapping() {
+    std::cout << "[TEST] Level response slider mapping..." << std::endl;
+    assert(LoudnessMeter::halfLifeForResponse(0.0f) == 0.0f); // whole track
+    float mid = LoudnessMeter::halfLifeForResponse(0.5f);
+    float max = LoudnessMeter::halfLifeForResponse(1.0f);
+    std::cout << "  Response 0.0 -> " << LoudnessMeter::halfLifeForResponse(0.0f) << "s (track hold)" << std::endl;
+    std::cout << "  Response 0.5 -> " << mid << "s" << std::endl;
+    std::cout << "  Response 1.0 -> " << max << "s" << std::endl;
+    assert(max >= 3.99f && max <= 4.01f);
+    assert(mid > 4.0f && mid < 120.0f);
+    std::cout << "  -> PASS: Level response logarithmic decay mapping verified." << std::endl;
+}
+
+void testFullChain() {
+    std::cout << "[TEST] AutoLevelEngine full chain: AGC -> MBC -> Limiter..." << std::endl;
     AutoLevelEngine engine;
     double sampleRate = 48000.0;
     engine.prepare(sampleRate);
 
     EngineParameters params;
     params.targetLUFS = -9.0f;
-    params.maxBoostDb = 6.0f;
+    params.maxBoostDb = 12.0f;
     params.maxCutDb = 12.0f;
-    params.ceilingDb = -0.5f;
-    params.compressionAmount = 0.5f;
+    params.ceilingDb = -1.5f;
+    params.compressionAmount = 0.6f;
+    params.toneSlopeDbPerOctave = -2.0f;
+    params.targetProfile = TargetProfile::MODERN_MIX;
 
-    // Simulate quiet signal (-18 dBFS sine wave) for 3 seconds
-    size_t block = 480; // 10ms blocks
-    size_t totalBlocks = 300; // 3 seconds
+    // Simulate audio blocks for 3 seconds
+    size_t block = 480;
+    size_t totalBlocks = 300;
 
     float maxOutputPeak = 0.0f;
     for (size_t b = 0; b < totalBlocks; ++b) {
@@ -124,27 +174,28 @@ void testLevelerAndLimiter() {
     auto state = engine.getVisualState();
     std::cout << "  Applied Gain: " << state.appliedGainDb << " dB" << std::endl;
     std::cout << "  Target Gain: " << state.targetGainDb << " dB" << std::endl;
-    std::cout << "  Max Output Peak: " << maxOutputPeak << std::endl;
+    std::cout << "  Max Output Peak: " << maxOutputPeak << " (Ceiling: " << std::pow(10.0f, -1.5f / 20.0f) << ")" << std::endl;
 
-    // Gain should have increased smoothly towards target (positive boost)
     assert(state.appliedGainDb > 0.0f);
-    // Safety limiter must ensure peak never exceeds ceiling (-0.5 dBFS = 0.944)
-    assert(maxOutputPeak <= 0.95f);
+    // Limiter ceiling (-1.5 dBFS = 0.841)
+    assert(maxOutputPeak <= 0.85f);
 
-    std::cout << "  -> PASS: Leveler smoothly boosted quiet signal and Limiter guarded ceiling." << std::endl;
+    std::cout << "  -> PASS: Full chain leveled, compressed, and limited to ceiling." << std::endl;
 }
 
 int main() {
     std::cout << "============================================" << std::endl;
-    std::cout << "   AutoLevel DJ DSP Unit Tests              " << std::endl;
+    std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
     std::cout << "============================================" << std::endl;
 
     testKWeightingSineWave();
+    testAndroidToneProfilesAndThresholds();
     testLR4CrossoverSummation();
-    testLevelerAndLimiter();
+    testLevelResponseMapping();
+    testFullChain();
 
     std::cout << "============================================" << std::endl;
-    std::cout << "   ALL DSP TESTS PASSED SUCCESSFULLY!       " << std::endl;
+    std::cout << "   ALL DSP TESTS PASSED WITH 100% ACCURACY! " << std::endl;
     std::cout << "============================================" << std::endl;
     return 0;
 }

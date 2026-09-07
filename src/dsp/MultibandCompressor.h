@@ -11,8 +11,8 @@ namespace autolevel::dsp {
 struct MBCParams {
     bool enabled = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
-    float toneSlopeDbPerOctave = -3.75f; // Tonal target tilt (-4.5 to -3.0 dB/oct)
-    float targetLUFS = -9.0f;
+    float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-6.0 to 0.0 dB/oct, default -2.0)
+    TargetProfile profile = TargetProfile::MODERN_MIX;
 };
 
 class BandCompressor {
@@ -31,13 +31,16 @@ public:
         m_gainReductionDb = 0.0f;
     }
 
+    /**
+     * Exact 6 dB soft-knee dynamics compression matching Android DynamicsProcessing MBC.
+     */
     inline void processStereo(float& left, float& right, float thresholdDb, float ratio, float amount) noexcept {
-        if (amount <= 0.001f || ratio <= 1.001f) {
+        if (amount < Bands::MIN_COMPRESSION || ratio <= 1.001f) {
             m_gainReductionDb = 0.0f;
             return;
         }
 
-        // Stereo envelope tracking (peak of L and R)
+        // Stereo peak envelope detector
         double absMax = std::max(std::abs(left), std::abs(right));
         if (absMax > m_envelope) {
             m_envelope = absMax + m_attackCoeff * (m_envelope - absMax);
@@ -48,15 +51,27 @@ public:
         double envDb = (m_envelope > 1e-6) ? 20.0 * std::log10(m_envelope) : -120.0;
         double overDb = envDb - thresholdDb;
 
-        if (overDb > 0.0) {
-            // Soft-knee compression
-            double targetGrDb = -(overDb * (1.0 - 1.0 / ratio)) * amount;
-            m_gainReductionDb = static_cast<float>(targetGrDb);
-            float gainLin = static_cast<float>(std::pow(10.0, targetGrDb / 20.0));
+        // Soft-knee calculation (knee width = 6.0 dB, half-knee = 3.0 dB)
+        constexpr double halfKnee = 3.0;
+        double grDb = 0.0;
+        double slope = 1.0 - 1.0 / static_cast<double>(ratio);
+
+        if (overDb <= -halfKnee) {
+            grDb = 0.0;
+        } else if (overDb < halfKnee) {
+            // Inside the 6 dB soft-knee transition
+            double x = overDb + halfKnee;
+            grDb = -(slope * x * x) / (4.0 * halfKnee);
+        } else {
+            // Fully above the knee
+            grDb = -slope * overDb;
+        }
+
+        m_gainReductionDb = static_cast<float>(grDb);
+        if (grDb < 0.0) {
+            float gainLin = static_cast<float>(std::pow(10.0, grDb / 20.0));
             left *= gainLin;
             right *= gainLin;
-        } else {
-            m_gainReductionDb = 0.0f;
         }
     }
 
@@ -74,6 +89,10 @@ private:
 
 /**
  * 6-band Linkwitz-Riley (LR4) crossover filterbank and dynamic compressor.
+ * Attack/Release times and thresholds exactly mirror Android GainProcessor & Shaper:
+ * - Band 0 (Sub, < 120 Hz): Attack = 30 ms, Release = 400 ms
+ * - Bands 1-5: Attack = 15 ms, Release = 200 ms
+ * - Knee width: 6 dB
  */
 class MultibandCompressor {
 public:
@@ -90,13 +109,12 @@ public:
             }
         }
 
-        // Setup per-band dynamic compressor ballistics
-        // Sub (25ms/120ms), Bass (20ms/100ms), LowMid (15ms/80ms), HighMid (10ms/60ms), Presence (6ms/40ms), Air (4ms/30ms)
-        const std::array<float, Bands::COUNT> attackTimes = { 25.0f, 20.0f, 15.0f, 10.0f, 6.0f, 4.0f };
-        const std::array<float, Bands::COUNT> releaseTimes = { 120.0f, 100.0f, 80.0f, 60.0f, 40.0f, 30.0f };
-
-        for (size_t b = 0; b < Bands::COUNT; ++b) {
-            m_bands[b].setup(sampleRate, attackTimes[b], releaseTimes[b]);
+        // Exact ballistics from Android GainProcessor.kt:
+        // Band 0: attack 30ms, release 400ms (slower in bass as broadcast chains do)
+        // Bands 1-5: attack 15ms, release 200ms
+        m_bands[0].setup(sampleRate, 30.0f, 400.0f);
+        for (size_t b = 1; b < Bands::COUNT; ++b) {
+            m_bands[b].setup(sampleRate, 15.0f, 200.0f);
         }
 
         reset();
@@ -115,27 +133,20 @@ public:
     }
 
     void process(float* left, float* right, size_t numSamples, const MBCParams& params) {
-        if (!params.enabled || params.compressionAmount <= 0.001f) {
+        if (!params.enabled || params.compressionAmount < Bands::MIN_COMPRESSION) {
+            for (size_t b = 0; b < Bands::COUNT; ++b) {
+                m_bands[b].reset();
+            }
             return;
         }
 
-        // Calculate thresholds per band from tone slope and target LUFS
-        std::array<float, Bands::COUNT> slopeOffsets;
-        Bands::computeThresholdOffsets(params.toneSlopeDbPerOctave, slopeOffsets);
+        // Calculate thresholds per band using exact Android Shaper formula
+        std::array<float, Bands::COUNT> thresholds = Bands::thresholdsFor(
+            true, params.toneSlopeDbPerOctave, params.profile
+        );
 
-        // Power per octave normalization offsets (relative to broad spectrum distribution)
-        // Sub has higher RMS density in dance music, air has lower
-        const std::array<float, Bands::COUNT> bandDensityOffsets = {
-            +3.0f, +1.5f, 0.0f, -1.0f, -2.5f, -4.0f
-        };
-
-        std::array<float, Bands::COUNT> thresholds;
-        float ratio = 1.0f + params.compressionAmount * 3.0f; // 1:1 to 4:1 ratio
-
-        for (size_t b = 0; b < Bands::COUNT; ++b) {
-            // Threshold sits relative to target loudness + slope tilt
-            thresholds[b] = params.targetLUFS + slopeOffsets[b] + bandDensityOffsets[b] + (1.0f - params.compressionAmount) * 4.0f;
-        }
+        // Compression ratio: 1.0 to 4.0 matching Android Shaper.kt
+        float ratio = 1.0f + params.compressionAmount * (Bands::MAX_RATIO - 1.0f);
 
         for (size_t s = 0; s < numSamples; ++s) {
             float inL = left[s];
@@ -170,10 +181,6 @@ public:
     }
 
 private:
-    /**
-     * Splits incoming sample into 6 frequency bands using a tree of LR4 crossovers.
-     * Crossovers: c0=120, c1=400, c2=1200, c3=3500, c4=8000
-     */
     inline void split6Bands(size_t ch, float in, std::array<float, Bands::COUNT>& outBands) noexcept {
         // Crossover 2 (1200 Hz): Split into Low (< 1200 Hz) and High (> 1200 Hz)
         double low1200 = m_lp[ch][2].process(in);
@@ -201,7 +208,6 @@ private:
 
     double m_sampleRate = 48000.0;
 
-    // 2 channels x 5 crossovers: LP and HP
     std::array<std::array<LR4Filter, 5>, 2> m_lp;
     std::array<std::array<LR4Filter, 5>, 2> m_hp;
 

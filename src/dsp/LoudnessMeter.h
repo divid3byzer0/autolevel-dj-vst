@@ -63,35 +63,44 @@ public:
         m_peakDbfs = SILENCE_LUFS;
     }
 
-    void setMemoryHalfLife(float seconds) {
-        m_halfLifeSeconds = seconds;
+    /**
+     * Maps response slider (0..1) to memory half-life in seconds.
+     * Exact logarithmic mapping from Android Model.kt:
+     * - 0.0: infinite (whole-track average, no decay)
+     * - 1.0: 4 seconds
+     */
+    static inline float halfLifeForResponse(float amount) noexcept {
+        constexpr float MIN_HALF_LIFE_S = 4.0f;
+        constexpr float MAX_HALF_LIFE_S = 120.0f;
+        if (amount < 0.01f) return 0.0f;
+        return MAX_HALF_LIFE_S * std::pow(MIN_HALF_LIFE_S / MAX_HALF_LIFE_S, std::clamp(amount, 0.0f, 1.0f));
     }
 
-    /**
-     * Process an incoming stereo buffer (non-interleaved).
-     */
+    void setLevelResponse(float amount) {
+        m_halfLifeSeconds = halfLifeForResponse(amount);
+    }
+
     void process(const float* left, const float* right, size_t numSamples) {
         for (size_t i = 0; i < numSamples; ++i) {
             double l = left[i];
             double r = right[i];
 
-            // True peak tracking
+            // Peak tracking with ~3 dB/s decay
             float absMax = static_cast<float>(std::max(std::abs(l), std::abs(r)));
             float peakDb = (absMax > 1e-6f) ? 20.0f * std::log10(absMax) : SILENCE_LUFS;
             if (peakDb > m_peakDbfs) {
                 m_peakDbfs = peakDb;
             } else {
-                // Peak decay ~3 dB per second
-                m_peakDbfs -= (3.0f / static_cast<float>(m_sampleRate));
+                m_peakDbfs -= static_cast<float>(3.0 / m_sampleRate);
                 if (m_peakDbfs < SILENCE_LUFS) m_peakDbfs = SILENCE_LUFS;
             }
 
-            // K-weighting filter
+            // ITU-R BS.1770 K-weighting pre-filter
             double fL = 0.0;
             double fR = 0.0;
             m_kFilter.processSample(l, r, fL, fR);
 
-            // Channel power sum (equal weighting for L and R)
+            // Channel power sum
             double sampleEnergy = fL * fL + fR * fR;
             m_currentStepEnergySum += sampleEnergy;
             m_currentStepSampleCount++;
@@ -116,6 +125,10 @@ public:
         return m_blocksIntegrated;
     }
 
+    float getHalfLifeSeconds() const noexcept {
+        return m_halfLifeSeconds;
+    }
+
 private:
     void finalizeStep() {
         if (m_currentStepSampleCount == 0) return;
@@ -126,11 +139,10 @@ private:
 
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        // Store step energy in ring buffer
         m_stepEnergies[m_stepIndex] = stepMeanPower;
         m_stepIndex = (m_stepIndex + 1) % m_shortTermSteps;
 
-        // Compute 400ms momentary loudness (sum of last 4 100ms steps)
+        // 400ms momentary loudness
         double momentarySum = 0.0;
         for (size_t i = 0; i < m_momentarySteps; ++i) {
             size_t idx = (m_stepIndex + m_shortTermSteps - 1 - i) % m_shortTermSteps;
@@ -139,22 +151,22 @@ private:
         double momentaryPower = momentarySum / static_cast<double>(m_momentarySteps);
         m_momentaryLUFS = toLUFS(momentaryPower);
 
-        // Compute 3s short-term loudness (sum of last 30 100ms steps)
+        // 3s short-term loudness
         double shortTermSum = 0.0;
         for (double p : m_stepEnergies) shortTermSum += p;
         double shortTermPower = shortTermSum / static_cast<double>(m_shortTermSteps);
         m_shortTermLUFS = toLUFS(shortTermPower);
 
-        // Update online histogram for integrated loudness
+        // 100ms step to histogram
         updateHistogram(m_momentaryLUFS, 100);
     }
 
     void updateHistogram(float blockLUFS, long dtMs) {
         if (blockLUFS <= ABSOLUTE_GATE_LUFS) return;
 
-        // Half-life decay
+        // Half-life decay from Android Leveler.kt
         if (m_halfLifeSeconds > 0.0f) {
-            double decay = std::exp(-0.69314718 * (dtMs / 1000.0) / m_halfLifeSeconds);
+            double decay = std::exp(-0.6931471805599453 * (static_cast<double>(dtMs) / 1000.0) / static_cast<double>(m_halfLifeSeconds));
             for (auto& bin : m_histogram) {
                 bin *= decay;
             }
@@ -162,7 +174,7 @@ private:
 
         int bin = static_cast<int>(std::round(blockLUFS - HISTOGRAM_MIN_DB));
         bin = std::clamp(bin, 0, HISTOGRAM_BINS - 1);
-        m_histogram[bin] += 1.0;
+        m_histogram[static_cast<size_t>(bin)] += 1.0;
         m_blocksIntegrated++;
         m_gatedMs += dtMs;
 
@@ -170,11 +182,9 @@ private:
     }
 
     float computeGatedMean() {
-        // Step 1: Mean above absolute gate (-70 LUFS)
         float ungated = meanAbove(ABSOLUTE_GATE_LUFS);
         if (ungated <= ABSOLUTE_GATE_LUFS) return SILENCE_LUFS;
 
-        // Step 2: Mean above relative gate (ungated - 10 LU)
         float relativeThreshold = ungated - RELATIVE_GATE_LU;
         return meanAbove(relativeThreshold);
     }
@@ -184,13 +194,12 @@ private:
         double weightSum = 0.0;
 
         for (int i = 0; i < HISTOGRAM_BINS; ++i) {
-            double n = m_histogram[i];
+            double n = m_histogram[static_cast<size_t>(i)];
             if (n <= 0.0) continue;
 
             float centerDb = HISTOGRAM_MIN_DB + static_cast<float>(i);
             if (centerDb < thresholdDb) continue;
 
-            // Power = 10^(dB / 10)
             powerSum += n * std::pow(10.0, centerDb / 10.0);
             weightSum += n;
         }
@@ -201,7 +210,6 @@ private:
 
     static inline float toLUFS(double meanPower) {
         if (meanPower <= 1e-12) return SILENCE_LUFS;
-        // BS.1770-4 offset: -0.691
         return static_cast<float>(-0.691 + 10.0 * std::log10(meanPower));
     }
 
@@ -218,13 +226,11 @@ private:
     std::vector<double> m_stepEnergies;
     size_t m_stepIndex = 0;
 
-    // Online 1-dB histogram
     std::array<double, HISTOGRAM_BINS> m_histogram{};
     size_t m_blocksIntegrated = 0;
     long m_gatedMs = 0;
-    float m_halfLifeSeconds = 25.0f; // 25 second rolling memory for live DJ sets
+    float m_halfLifeSeconds = 0.0f; // 0 = whole track by default
 
-    // Cached meter outputs
     mutable std::mutex m_mutex;
     float m_momentaryLUFS = SILENCE_LUFS;
     float m_shortTermLUFS = SILENCE_LUFS;

@@ -11,13 +11,14 @@ namespace autolevel::dsp {
 
 struct EngineParameters {
     float targetLUFS = -9.0f;
-    float maxBoostDb = 6.0f;
+    float maxBoostDb = 12.0f;
     float maxCutDb = 12.0f;
-    float slewSpeedDbPerSec = 0.75f;
+    float levelResponse = 0.25f; // 0..1 slider, maps to memory half-life
     bool freezeBreakdowns = true;
-    float toneSlopeDbPerOctave = -3.75f;
-    float compressionAmount = 0.5f;
-    float ceilingDb = -0.5f;
+    float toneSlopeDbPerOctave = -2.0f; // -6.0 to 0.0 dB/oct
+    TargetProfile targetProfile = TargetProfile::MODERN_MIX;
+    float compressionAmount = 0.5f; // 0..1 slider
+    float ceilingDb = -1.5f;
     bool bypass = false;
 };
 
@@ -28,6 +29,7 @@ struct EngineVisualState {
     bool isFrozen = false;
     std::array<float, Bands::COUNT> mbcGainReductionsDb{};
     float limiterGainReductionDb = 0.0f;
+    float activeHalfLifeSeconds = 0.0f;
 };
 
 class AutoLevelEngine {
@@ -50,38 +52,41 @@ public:
         m_limiter.reset();
     }
 
+    /**
+     * Exact chain: AGC (Makeup Gain) -> Multiband Compressor (MBC) -> Limiter
+     */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         if (params.bypass || numSamples == 0) {
             return;
         }
 
-        // 1. Measure incoming raw loudness
+        // 1. Measure incoming raw perceived loudness (ITU-R BS.1770-4 K-weighting + dual-gating)
+        m_loudnessMeter.setLevelResponse(params.levelResponse);
         m_loudnessMeter.process(left, right, numSamples);
         LoudnessReadings readings = m_loudnessMeter.getReadings();
 
-        // 2. Update leveler target & slew
+        // 2. Compute Leveler / AGC target gain & slew
         LevelerParams levelerParams;
         levelerParams.targetLUFS = params.targetLUFS;
         levelerParams.maxBoostDb = params.maxBoostDb;
         levelerParams.maxCutDb = params.maxCutDb;
-        levelerParams.baseSlewDbPerSec = params.slewSpeedDbPerSec;
         levelerParams.freezeBreakdowns = params.freezeBreakdowns;
 
         float dtSeconds = static_cast<float>(numSamples) / static_cast<float>(m_sampleRate);
         m_leveler.update(levelerParams, readings, m_loudnessMeter.getBlocksIntegrated(), dtSeconds);
 
-        // 3. Apply leveling gain
+        // 3. Stage 1: AGC Makeup Gain applied to audio
         m_leveler.processBlock(left, right, numSamples);
 
-        // 4. Multiband Compressor (tone shaping & spectral management)
+        // 4. Stage 2: 6-band Multiband Dynamic Tone Shaper (thresholds linked to tone curve & profile)
         MBCParams mbcParams;
-        mbcParams.enabled = (params.compressionAmount > 0.001f);
+        mbcParams.enabled = (params.compressionAmount >= Bands::MIN_COMPRESSION);
         mbcParams.compressionAmount = params.compressionAmount;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
-        mbcParams.targetLUFS = params.targetLUFS;
+        mbcParams.profile = params.targetProfile;
         m_mbc.process(left, right, numSamples, mbcParams);
 
-        // 5. Safety Limiter (protects amps and speakers from any transient spike or clipping)
+        // 5. Stage 3: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
         m_limiter.setCeilingDb(params.ceilingDb);
         m_limiter.process(left, right, numSamples);
 
@@ -92,6 +97,7 @@ public:
         m_visualState.isFrozen = m_leveler.isFrozen();
         m_visualState.mbcGainReductionsDb = m_mbc.getGainReductionsDb();
         m_visualState.limiterGainReductionDb = m_limiter.getGainReductionDb();
+        m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
     }
 
     EngineVisualState getVisualState() const noexcept {
