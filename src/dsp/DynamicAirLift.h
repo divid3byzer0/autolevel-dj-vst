@@ -16,11 +16,11 @@ enum class AirLiftMode : int {
 /**
  * Dynamic Air Lift (Dolby Duo Engine - High End)
  *
- * 100% distortion-free dynamic upward expansion high-shelf filter (> 9.5 kHz).
+ * 100% distortion-free dynamic upward expansion high-shelf filter (> 6.5 kHz).
  * Modeled on the legendary Dolby A / Dolby SR sliding-band upward expansion technique.
  * Replaces nonlinear harmonic excitation with pure, transparent, audiophile air lift.
  *
- * It analyzes the real-time energy ratio between high-frequency air (> 9.5 kHz) and the midrange anchor.
+ * It analyzes the real-time energy ratio between high-frequency air (> 6.5 kHz) and the midrange anchor.
  * - On dull or vintage tracks (e.g., 70s disco, early vinyl, warm analog recordings), it dynamically
  *   pulls up natural acoustic sheen, cymbal sizzle, and vocal breath by up to +6.5 dB.
  * - On bright modern tracks, the lift automatically dials back to 0 dB.
@@ -71,12 +71,12 @@ public:
             default: break;
         }
 
-        // 1. Measure sidechain air energy (> 9.5 kHz) vs mid anchor (1 kHz - 3 kHz)
+        // 1. Measure sidechain air energy (> 6.5 kHz) vs mid anchor (1 kHz - 3 kHz)
         float airSumSq = 0.0f;
         float midSumSq = 0.0f;
         float peakAirSample = 0.0f;
 
-        const double wAir = 2.0 * 3.141592653589793 * 9500.0 / m_sampleRate;
+        const double wAir = 2.0 * 3.141592653589793 * 6500.0 / m_sampleRate;
         const double aAir = std::clamp(std::exp(-wAir), 0.0, 0.999);
 
         const double wMid = 2.0 * 3.141592653589793 * 2000.0 / m_sampleRate;
@@ -85,7 +85,7 @@ public:
         for (size_t i = 0; i < numSamples; ++i) {
             float monoIn = 0.5f * (left[i] + right[i]);
 
-            // High detector (HP at 9.5 kHz)
+            // High detector (HP at 6.5 kHz)
             m_detAir_z1 = (1.0 - aAir) * static_cast<double>(monoIn) + aAir * m_detAir_z1;
             float airSample = static_cast<float>(static_cast<double>(monoIn) - m_detAir_z1);
             airSumSq += airSample * airSample;
@@ -110,16 +110,16 @@ public:
         // When high-frequency peak transient exceeds RMS by a significant margin (sharp "S", crash),
         // duck the lift immediately (1ms attack, 40ms release).
         float crestRatio = peakAirSample / (m_airEnv + 1e-4f);
-        float targetDucking = (crestRatio > 3.0f) ? std::clamp((crestRatio - 3.0f) / 3.0f, 0.0f, 1.0f) : 0.0f;
+        float targetDucking = (crestRatio > 2.5f) ? std::clamp((crestRatio - 2.5f) / 2.5f, 0.0f, 1.0f) : 0.0f;
         float duckAlpha = (targetDucking > m_sibilanceDucking) ?
                           std::clamp(std::exp(-dtSeconds / 0.002f), 0.0f, 0.999f) :
                           std::clamp(std::exp(-dtSeconds / 0.040f), 0.0f, 0.999f);
         m_sibilanceDucking = duckAlpha * m_sibilanceDucking + (1.0f - duckAlpha) * targetDucking;
 
         // Compute air-to-mid ratio:
-        // Vintage / dark tracks typically have ratio < 0.20. Modern EDM / pop tracks > 0.55.
+        // Vintage / dark tracks typically have ratio < 0.30. Modern bright EDM / pop tracks > 0.65.
         float ratio = m_airEnv / (m_midEnv + 1e-4f);
-        float deficit = std::clamp((0.55f - ratio) / 0.35f, 0.0f, 1.0f);
+        float deficit = std::clamp((0.65f - ratio) / 0.35f, 0.0f, 1.0f);
         float rawTargetGainDb = maxTargetDb * deficit;
         float targetGainDb = rawTargetGainDb * (1.0f - 0.75f * m_sibilanceDucking);
 
@@ -132,9 +132,9 @@ public:
             return; // Virtually bypassed, pass through untouched
         }
 
-        // 2. Compute 2nd-order High-Shelf filter coefficients (fc = 9500 Hz, Q = 0.707)
+        // 2. Compute 2nd-order High-Shelf filter coefficients (fc = 6500 Hz, Q = 0.707)
         double b0, b1, b2, a1, a2;
-        calculateHighShelf(9500.0, static_cast<double>(m_currentGainDb), b0, b1, b2, a1, a2);
+        calculateHighShelf(6500.0, static_cast<double>(m_currentGainDb), b0, b1, b2, a1, a2);
 
         // 3. Process stereo audio in-place via Direct Form II Transposed
         double sL1 = m_sL_z1, sL2 = m_sL_z2;
