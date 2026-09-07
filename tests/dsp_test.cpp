@@ -220,6 +220,88 @@ void testEbuR128DynamicLoudness() {
     std::cout << "  -> PASS: EBU R128 measures varying loudness accurately across all levels." << std::endl;
 }
 
+void testMbcSpeedBallistics() {
+    std::cout << "[TEST] Multiband Compressor speed ballistics (Slow, Normal, Fast)..." << std::endl;
+    MultibandCompressor mbc;
+    double sampleRate = 48000.0;
+    mbc.prepare(sampleRate);
+
+    MBCParams params;
+    params.enabled = true;
+    params.compressionAmount = 0.8f;
+    params.toneSlopeDbPerOctave = -2.0f;
+    params.profile = TargetProfile::MODERN_MIX;
+
+    // Test with FAST speed: fast response, deeper reduction within short burst
+    params.speed = MBCSpeed::FAST;
+    size_t n = 4800; // 100ms
+    std::vector<float> fastL(n), fastR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = static_cast<float>(std::sin(2.0 * TEST_PI * 200.0 * i / sampleRate));
+        fastL[i] = s;
+        fastR[i] = s;
+    }
+    mbc.reset();
+    mbc.process(fastL.data(), fastR.data(), n, params);
+    float fastGr = mbc.getGainReductionsDb()[1]; // Bass band (120-400 Hz)
+
+    // Test with SLOW speed: slower attack, less reduction over the same 100ms window
+    params.speed = MBCSpeed::SLOW;
+    std::vector<float> slowL = fastL;
+    std::vector<float> slowR = fastR;
+    mbc.reset();
+    mbc.process(slowL.data(), slowR.data(), n, params);
+    float slowGr = mbc.getGainReductionsDb()[1];
+
+    std::cout << "  Fast 100ms Bass GR: " << fastGr << " dB" << std::endl;
+    std::cout << "  Slow 100ms Bass GR: " << slowGr << " dB" << std::endl;
+
+    // Fast compressor reacts faster -> more negative GR in initial 100ms
+    assert(fastGr < slowGr);
+    std::cout << "  -> PASS: MBC speed mode correctly alters compression ballistics." << std::endl;
+}
+
+void testPostMbcGain() {
+    std::cout << "[TEST] Post-MBC Gain stage (makeup & trim)..." << std::endl;
+    AutoLevelEngine engine;
+    double sampleRate = 48000.0;
+    engine.prepare(sampleRate);
+
+    EngineParameters params;
+    params.targetLUFS = -9.0f;
+    params.maxBoostDb = 0.0f;
+    params.maxCutDb = 0.0f;
+    params.compressionAmount = 0.0f; // Linear pass-through
+    params.ceilingDb = 0.0f;         // Limiter ceiling 0 dBFS so +6 dB won't clip test signal
+
+    size_t n = 480;
+    // Base signal at 0.1 peak (-20 dBFS)
+    std::vector<float> in0L(n, 0.1f), in0R(n, 0.1f);
+    params.postMbcGainDb = 0.0f;
+    engine.process(in0L.data(), in0R.data(), n, params);
+    float peak0 = std::abs(in0L[0]);
+
+    // +6 dB post gain -> ~2.0x amplitude
+    std::vector<float> inPlusL(n, 0.1f), inPlusR(n, 0.1f);
+    params.postMbcGainDb = 6.0f;
+    engine.process(inPlusL.data(), inPlusR.data(), n, params);
+    float peakPlus = std::abs(inPlusL[0]);
+
+    // -6 dB post gain -> ~0.5x amplitude
+    std::vector<float> inMinusL(n, 0.1f), inMinusR(n, 0.1f);
+    params.postMbcGainDb = -6.0f;
+    engine.process(inMinusL.data(), inMinusR.data(), n, params);
+    float peakMinus = std::abs(inMinusL[0]);
+
+    std::cout << "  0 dB Post Peak: " << peak0 << std::endl;
+    std::cout << "  +6 dB Post Peak: " << peakPlus << " (ratio: " << (peakPlus / peak0) << ")" << std::endl;
+    std::cout << "  -6 dB Post Peak: " << peakMinus << " (ratio: " << (peakMinus / peak0) << ")" << std::endl;
+
+    assert(std::abs((peakPlus / peak0) - std::pow(10.0f, 6.0f / 20.0f)) < 0.02f);
+    assert(std::abs((peakMinus / peak0) - std::pow(10.0f, -6.0f / 20.0f)) < 0.02f);
+    std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -230,6 +312,8 @@ int main() {
     testLR4CrossoverSummation();
     testLevelResponseMapping();
     testEbuR128DynamicLoudness();
+    testMbcSpeedBallistics();
+    testPostMbcGain();
     testFullChain();
 
     std::cout << "============================================" << std::endl;

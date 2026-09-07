@@ -17,7 +17,9 @@ struct EngineParameters {
     bool freezeBreakdowns = true;
     float toneSlopeDbPerOctave = -2.0f; // -6.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
+    MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
     float compressionAmount = 0.5f; // 0..1 slider
+    float postMbcGainDb = 0.0f;     // -12 to +12 dB
     float ceilingDb = -1.5f;
     bool bypass = false;
 };
@@ -32,7 +34,9 @@ struct EngineVisualState {
     float limiterGainReductionDb = 0.0f;
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
+    MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
     float activeToneSlope = -2.0f;
+    float postMbcGainDb = 0.0f;
 };
 
 class AutoLevelEngine {
@@ -88,13 +92,23 @@ public:
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
         mbcParams.baseThresholdDb = params.targetLUFS - 15.0f; // Exact -24 dBFS at default -9 LUFS
+        mbcParams.speed = params.mbcSpeed;
         m_mbc.process(left, right, numSamples, mbcParams);
 
-        // 5. Stage 3: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
+        // 5. Stage 3: Post-MBC Gain stage (makeup/trim before safety limiter)
+        if (std::abs(params.postMbcGainDb) > 0.01f) {
+            float postGainLin = std::pow(10.0f, params.postMbcGainDb / 20.0f);
+            for (size_t s = 0; s < numSamples; ++s) {
+                left[s] *= postGainLin;
+                right[s] *= postGainLin;
+            }
+        }
+
+        // 6. Stage 4: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
         m_limiter.setCeilingDb(params.ceilingDb);
         m_limiter.process(left, right, numSamples);
 
-        // 6. Cache state for UI
+        // 7. Cache state for UI
         m_visualState.loudness = readings;
         m_visualState.appliedGainDb = m_leveler.getCurrentGainDb();
         m_visualState.targetGainDb = m_leveler.getTargetGainDb();
@@ -106,7 +120,9 @@ public:
         m_visualState.limiterGainReductionDb = m_limiter.getGainReductionDb();
         m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         m_visualState.activeProfile = params.targetProfile;
+        m_visualState.activeMbcSpeed = params.mbcSpeed;
         m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
+        m_visualState.postMbcGainDb = params.postMbcGainDb;
     }
 
     EngineVisualState getVisualState() const noexcept {

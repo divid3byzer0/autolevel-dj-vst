@@ -17,17 +17,23 @@ ModernHardwareLookAndFeel::ModernHardwareLookAndFeel() {
     setColour(juce::TextButton::textColourOnId, juce::Colour(0xff00e5ff));
 }
 
+juce::Label* ModernHardwareLookAndFeel::createSliderTextBox(juce::Slider& slider) {
+    auto* l = juce::LookAndFeel_V4::createSliderTextBox(slider);
+    l->setFont(juce::FontOptions(11.5f, juce::Font::bold));
+    return l;
+}
+
 void ModernHardwareLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                                                  float sliderPosProportional, float rotaryStartAngle,
                                                  float rotaryEndAngle, juce::Slider& slider)
 {
     float textBoxH = 22.0f;
-    float diameter = std::min(static_cast<float>(width), static_cast<float>(height) - textBoxH) - 16.0f;
+    float diameter = std::min(static_cast<float>(width), static_cast<float>(height) - textBoxH) - 14.0f;
     if (diameter < 10.0f) return;
 
     float radius = diameter * 0.5f;
     float centerX = static_cast<float>(x) + static_cast<float>(width) * 0.5f;
-    float centerY = static_cast<float>(y) + (static_cast<float>(height) - textBoxH) * 0.5f + 2.0f;
+    float centerY = static_cast<float>(y) + (static_cast<float>(height) - textBoxH) * 0.5f + 1.0f;
 
     float arcRadius = radius + 4.0f;
 
@@ -212,20 +218,20 @@ void ToneCurveVisualizer::paint(juce::Graphics& g)
         g.setColour(juce::Colour(0xff1c2330));
         g.drawVerticalLine(static_cast<int>(x), plotY, plotY + plotH);
 
-        g.setColour(juce::Colour(0xff535d6e));
-        g.setFont(juce::FontOptions(8.5f, juce::Font::plain));
+        g.setColour(juce::Colour(0xff7c889a));
+        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
         juce::String freqStr = (crossovers[i] >= 1000.0f)
             ? (juce::String(crossovers[i] / 1000.0f, 1) + "k")
             : (juce::String(static_cast<int>(crossovers[i])));
-        g.drawText(freqStr, static_cast<int>(x) - 18, static_cast<int>(plotY + plotH) - 10, 36, 10, juce::Justification::centred);
+        g.drawText(freqStr, static_cast<int>(x) - 18, static_cast<int>(plotY + plotH) - 11, 36, 11, juce::Justification::centred);
     }
 
     // Band names at top
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float x1 = (b == 0) ? plotX : freqToX(crossovers[b - 1]);
         float x2 = (b == 5) ? (plotX + plotW) : freqToX(crossovers[b]);
-        g.setColour(juce::Colour(0xff606c7d));
-        g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
+        g.setColour(juce::Colour(0xffb0bac8));
+        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
         g.drawText(juce::String(bandNames[b].data()), static_cast<int>(x1), static_cast<int>(plotY) + 1, static_cast<int>(x2 - x1), 12, juce::Justification::centred);
     }
 
@@ -342,17 +348,17 @@ void MultibandMeterRack::paint(juce::Graphics& g)
     const auto& contours = autolevel::dsp::Bands::MODERN_CONTOUR_DB;
 
     int numBands = static_cast<int>(autolevel::dsp::Bands::COUNT);
-    float scaleW = 32.0f;
+    float scaleW = 34.0f;
     float availW = bounds.getWidth() - scaleW - 16.0f;
     float colW = availW / static_cast<float>(numBands);
     float startX = bounds.getX() + scaleW + 8.0f;
 
-    float meterTopY = bounds.getY() + 30.0f;
-    float meterH = bounds.getHeight() - 58.0f;
+    float meterTopY = bounds.getY() + 26.0f;
+    float meterH = bounds.getHeight() - 56.0f;
 
     // Draw dB scale ticks on left
-    g.setColour(juce::Colour(0xff606c7d));
-    g.setFont(juce::FontOptions(8.5f, juce::Font::plain));
+    g.setColour(juce::Colour(0xff8a96a7));
+    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
     std::array<float, 5> scaleDbs = { 0.0f, -3.0f, -6.0f, -9.0f, -12.0f };
     for (float db : scaleDbs) {
         float norm = -db / 12.0f;
@@ -365,13 +371,13 @@ void MultibandMeterRack::paint(juce::Graphics& g)
     // Draw individual band meters
     for (int b = 0; b < numBands; ++b) {
         float bx = startX + static_cast<float>(b) * colW;
-        float barW = std::min(colW - 8.0f, 32.0f);
+        float barW = std::min(colW - 8.0f, 34.0f);
         float barX = bx + (colW - barW) * 0.5f;
 
         // Band Name at top
-        g.setColour(juce::Colour(0xff9aa4b2));
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        g.drawText(juce::String(bandNames[static_cast<size_t>(b)].data()), static_cast<int>(bx), static_cast<int>(bounds.getY() + 6), static_cast<int>(colW), 14, juce::Justification::centred);
+        g.setColour(juce::Colour(0xffd0d7e2));
+        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+        g.drawText(juce::String(bandNames[static_cast<size_t>(b)].data()), static_cast<int>(bx), static_cast<int>(bounds.getY() + 5), static_cast<int>(colW), 16, juce::Justification::centred);
 
         // Meter Trough
         juce::Rectangle<float> trough(barX, meterTopY, barW, meterH);
@@ -417,20 +423,20 @@ void MultibandMeterRack::paint(juce::Graphics& g)
         }
 
         // Real-time numeric dB readout below meter
-        g.setColour((gr < -0.1f) ? juce::Colour(0xff00e5ff) : juce::Colour(0xff5f6877));
-        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.setColour((gr < -0.1f) ? juce::Colour(0xff00e5ff) : juce::Colour(0xff7c889a));
+        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
         juce::String grText = (gr < -0.05f) ? (juce::String(gr, 1) + "dB") : "0.0dB";
-        g.drawText(grText, static_cast<int>(bx), static_cast<int>(meterTopY + meterH + 4), static_cast<int>(colW), 12, juce::Justification::centred);
+        g.drawText(grText, static_cast<int>(bx), static_cast<int>(meterTopY + meterH + 4), static_cast<int>(colW), 14, juce::Justification::centred);
 
         // Contour offset badge
         float offset = (m_profile == autolevel::dsp::TargetProfile::MODERN_MIX)
             ? contours[static_cast<size_t>(b)] : 0.0f;
 
         juce::String offsetStr = (offset > 0.0f) ? ("+" + juce::String(offset, 1)) : juce::String(offset, 1);
-        juce::Colour offsetCol = (offset < 0.0f) ? juce::Colour(0xffffb300) : (offset > 0.0f ? juce::Colour(0xff00e5ff) : juce::Colour(0xff4a5360));
+        juce::Colour offsetCol = (offset < 0.0f) ? juce::Colour(0xffffb300) : (offset > 0.0f ? juce::Colour(0xff00e5ff) : juce::Colour(0xff556070));
         g.setColour(offsetCol);
-        g.setFont(juce::FontOptions(8.5f, juce::Font::plain));
-        g.drawText(offsetStr, static_cast<int>(bx), static_cast<int>(meterTopY + meterH + 16), static_cast<int>(colW), 10, juce::Justification::centred);
+        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.drawText(offsetStr, static_cast<int>(bx), static_cast<int>(meterTopY + meterH + 18), static_cast<int>(colW), 12, juce::Justification::centred);
     }
 }
 
@@ -442,26 +448,25 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     : AudioProcessorEditor(&p), m_processor(p)
 {
     setLookAndFeel(&m_lookAndFeel);
-    setSize(820, 620);
+    setSize(840, 660);
 
     // Setup Visualizers
     addAndMakeVisible(m_toneVisualizer);
     addAndMakeVisible(m_meterRack);
 
-    // Target LUFS slider (Primary Large Rotary Knob)
+    // Row 1: Primary Knobs
     setupRotary(m_targetLufsSlider, m_targetLufsLabel, "TARGET LUFS", " LUFS", juce::Colour(0xff00e676));
-
-    // Compression, Level Response, Tone Slope
     setupRotary(m_compressionSlider, m_compressionLabel, "COMPRESSION", "x", juce::Colour(0xff00e5ff));
     setupRotary(m_levelResponseSlider, m_levelResponseLabel, "LEVEL RESPONSE", "", juce::Colour(0xff00e5ff));
     setupRotary(m_toneSlopeSlider, m_toneSlopeLabel, "TONE SLOPE", " dB/oct", juce::Colour(0xffffb300));
 
-    // Boost, Cut, Limiter Ceiling
+    // Row 2: Secondary Knobs (including Post-MBC Gain)
     setupRotary(m_maxBoostSlider, m_maxBoostLabel, "MAX BOOST", " dB", juce::Colour(0xff00e5ff));
     setupRotary(m_maxCutSlider, m_maxCutLabel, "MAX CUT", " dB", juce::Colour(0xffffb300));
+    setupRotary(m_postGainSlider, m_postGainLabel, "POST GAIN", " dB", juce::Colour(0xff00e5ff));
     setupRotary(m_ceilingSlider, m_ceilingLabel, "LIMITER CEILING", " dBFS", juce::Colour(0xffff3366));
 
-    // Breakdown freeze
+    // Breakdown freeze (located in Card 2 - AGC Gain Correction)
     m_freezeBreakdownsButton.setButtonText("Breakdown Freeze");
     m_freezeBreakdownsButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffffb300));
     addAndMakeVisible(m_freezeBreakdownsButton);
@@ -483,23 +488,49 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     addChildComponent(m_profileBox);
 
     // Tactile Profile Segmented Buttons
+    m_pinkNoiseBtn.setButtonText("PINK NOISE");
     m_pinkNoiseBtn.setClickingTogglesState(false);
     m_pinkNoiseBtn.onClick = [this]() {
         m_profileBox.setSelectedItemIndex(0, juce::sendNotificationSync);
     };
     addAndMakeVisible(m_pinkNoiseBtn);
 
+    m_modernMixBtn.setButtonText("MODERN MIX");
     m_modernMixBtn.setClickingTogglesState(false);
     m_modernMixBtn.onClick = [this]() {
         m_profileBox.setSelectedItemIndex(1, juce::sendNotificationSync);
     };
     addAndMakeVisible(m_modernMixBtn);
 
-    m_profileDescLabel.setText("Club Master Contour • Mud Tamed (-2.5dB @ 250Hz) • Harshness Controlled (-2.0dB @ 5kHz)", juce::dontSendNotification);
-    m_profileDescLabel.setFont(juce::FontOptions(10.0f, juce::Font::plain));
+    m_profileDescLabel.setText("Club Contour: -2.5dB @ 250Hz | -2.0dB @ 5kHz", juce::dontSendNotification);
+    m_profileDescLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_profileDescLabel.setJustificationType(juce::Justification::centred);
     m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     addAndMakeVisible(m_profileDescLabel);
+
+    // MBC Speed Controls (Segmented header buttons)
+    m_mbcSpeedBox.addItem("Slow", 1);
+    m_mbcSpeedBox.addItem("Normal", 2);
+    m_mbcSpeedBox.addItem("Fast", 3);
+    addChildComponent(m_mbcSpeedBox);
+
+    m_mbcSpeedLabel.setText("MBC SPEED:", juce::dontSendNotification);
+    m_mbcSpeedLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_mbcSpeedLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_mbcSpeedLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(m_mbcSpeedLabel);
+
+    auto setupSpeedBtn = [this](juce::TextButton& btn, int index) {
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, index]() {
+            m_mbcSpeedBox.setSelectedItemIndex(index, juce::sendNotificationSync);
+        };
+        addAndMakeVisible(btn);
+    };
+
+    setupSpeedBtn(m_speedSlowBtn, 0);
+    setupSpeedBtn(m_speedNormalBtn, 1);
+    setupSpeedBtn(m_speedFastBtn, 2);
 
     // APVTS Attachments
     auto& apvts = m_processor.getAPVTS();
@@ -513,10 +544,14 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_TONE_SLOPE, m_toneSlopeSlider);
     m_profileAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_TARGET_PROFILE, m_profileBox);
+    m_mbcSpeedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_MBC_SPEED, m_mbcSpeedBox);
     m_maxBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MAX_BOOST, m_maxBoostSlider);
     m_maxCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MAX_CUT, m_maxCutSlider);
+    m_postGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_POST_MBC_GAIN, m_postGainSlider);
     m_ceilingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_CEILING_DB, m_ceilingSlider);
     m_freezeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -537,7 +572,7 @@ void AutoLevelDJAudioProcessorEditor::setupRotary(juce::Slider& slider, juce::La
                                                  juce::Colour accentCol)
 {
     slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 20);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 22);
     slider.setTextValueSuffix(suffix);
     slider.setColour(juce::Slider::rotarySliderFillColourId, accentCol);
     addAndMakeVisible(slider);
@@ -545,7 +580,7 @@ void AutoLevelDJAudioProcessorEditor::setupRotary(juce::Slider& slider, juce::La
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::FontOptions(11.0f, juce::Font::bold));
     label.setJustificationType(juce::Justification::centred);
-    label.setColour(juce::Label::textColourId, juce::Colour(0xff8c96a4));
+    label.setColour(juce::Label::textColourId, juce::Colour(0xff9aa5b4));
     addAndMakeVisible(label);
 }
 
@@ -559,12 +594,18 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_modernMixBtn.setToggleState(!isPink, juce::dontSendNotification);
 
     if (isPink) {
-        m_profileDescLabel.setText("Flat 1/f Pink Noise Reference • Pure linear octave balance", juce::dontSendNotification);
+        m_profileDescLabel.setText("Linear 1/f: Flat octave energy balance", juce::dontSendNotification);
         m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xffffb300));
     } else {
-        m_profileDescLabel.setText("Club Master Contour • Mud Tamed (-2.5dB @ 250Hz) • Harshness Controlled (-2.0dB @ 5kHz)", juce::dontSendNotification);
+        m_profileDescLabel.setText("Club Contour: -2.5dB @ 250Hz | -2.0dB @ 5kHz", juce::dontSendNotification);
         m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xff00e5ff));
     }
+
+    // Sync MBC speed segmented buttons
+    int speedIdx = m_mbcSpeedBox.getSelectedItemIndex();
+    m_speedSlowBtn.setToggleState(speedIdx == 0, juce::dontSendNotification);
+    m_speedNormalBtn.setToggleState(speedIdx == 1, juce::dontSendNotification);
+    m_speedFastBtn.setToggleState(speedIdx == 2, juce::dontSendNotification);
 
     // Update Visualizers
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
@@ -574,7 +615,7 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
 }
 
 void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
-    // Obsidian dark backdrop
+    // Obsidian dark chassis backdrop
     g.fillAll(juce::Colour(0xff0a0c10));
 
     // Top Header Bar
@@ -613,13 +654,13 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
         g.setColour(juce::Colour(0xff242c3b));
         g.drawRoundedRectangle(bounds.toFloat(), 6.0f, 1.0f);
 
-        g.setColour(juce::Colour(0xff707b8c));
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        g.setColour(juce::Colour(0xff8893a4));
+        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
         g.drawText(title, bounds.getX() + 12, bounds.getY() + 8, bounds.getWidth() - 24, 16, juce::Justification::left);
     };
 
     // Card 1: Perceived Loudness (Left)
-    juce::Rectangle<int> integCard(20, 64, 230, 160);
+    juce::Rectangle<int> integCard(20, 64, 240, 162);
     drawCard(integCard, "PERCEIVED LOUDNESS (EBU R128)");
 
     float integ = m_latestState.loudness.integratedLUFS;
@@ -633,50 +674,51 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     }
 
     // Momentary & Short-Term Readings (EBU R128 M & S)
-    g.setFont(juce::FontOptions(10.5f, juce::Font::plain));
+    g.setFont(juce::FontOptions(11.0f, juce::Font::plain));
     float mom = m_latestState.loudness.momentaryLUFS;
     float st = m_latestState.loudness.shortTermLUFS;
     juce::String momStr = (mom > -70.0f) ? (juce::String(mom, 1) + " LUFS") : "--.-";
     juce::String stStr  = (st > -70.0f)  ? (juce::String(st, 1)  + " LUFS") : "--.-";
 
     g.setColour(juce::Colour(0xff9aa3b0));
-    g.drawText("M (400ms): " + momStr + "  |  S (3s): " + stStr, integCard.getX() + 8, integCard.getY() + 70, integCard.getWidth() - 16, 16, juce::Justification::centred);
+    g.drawText("M (400ms): " + momStr + "  |  S (3s): " + stStr, integCard.getX() + 8, integCard.getY() + 68, integCard.getWidth() - 16, 16, juce::Justification::centred);
 
-    // Target Delta
+    // Target Delta (Clean ASCII - no Greek delta / mojibake!)
     float targetLufs = static_cast<float>(m_targetLufsSlider.getValue());
     float delta = (integ > -70.0f) ? (integ - targetLufs) : 0.0f;
-    juce::String deltaStr = (delta >= 0.0f) ? ("Δ +" + juce::String(delta, 1) + " LU") : ("Δ " + juce::String(delta, 1) + " LU");
+    juce::String deltaSign = (delta >= 0.0f) ? "+" : "";
+    juce::String deltaStr = "Target Delta: " + deltaSign + juce::String(delta, 1) + " LU";
     g.setColour((std::abs(delta) < 1.0f) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300));
-    g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-    g.drawText("Target Delta: " + deltaStr, integCard.getX() + 12, integCard.getY() + 92, integCard.getWidth() - 24, 16, juce::Justification::centred);
+    g.setFont(juce::FontOptions(11.5f, juce::Font::bold));
+    g.drawText(deltaStr, integCard.getX() + 12, integCard.getY() + 90, integCard.getWidth() - 24, 16, juce::Justification::centred);
 
     // Integrated Status Badge
     juce::Rectangle<float> statusRect(static_cast<float>(integCard.getX() + 16), static_cast<float>(integCard.getY() + 124),
-                                      static_cast<float>(integCard.getWidth() - 32), 22.0f);
+                                      static_cast<float>(integCard.getWidth() - 32), 24.0f);
     g.setColour(juce::Colour(0xff18222f));
     g.fillRoundedRectangle(statusRect, 4.0f);
     g.setColour(juce::Colour(0xff00e676));
     g.drawRoundedRectangle(statusRect, 4.0f, 1.0f);
-    g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
     g.drawText("EBU R128 DUAL-GATED CALIBRATED", statusRect, juce::Justification::centred);
 
     // Card 2: AGC Gain Rider (Middle)
-    juce::Rectangle<int> gainCard(260, 64, 230, 160);
+    juce::Rectangle<int> gainCard(270, 64, 240, 162);
     drawCard(gainCard, "AGC GAIN CORRECTION");
 
     float gain = m_latestState.appliedGainDb;
     g.setFont(juce::FontOptions(34.0f, juce::Font::bold));
     if (gain >= 0.0f) {
         g.setColour(juce::Colour(0xff00e5ff));
-        g.drawText("+" + juce::String(gain, 1) + " dB", gainCard.getX(), gainCard.getY() + 32, gainCard.getWidth(), 38, juce::Justification::centred);
+        g.drawText("+" + juce::String(gain, 1) + " dB", gainCard.getX(), gainCard.getY() + 28, gainCard.getWidth(), 36, juce::Justification::centred);
     } else {
         g.setColour(juce::Colour(0xffffb300));
-        g.drawText(juce::String(gain, 1) + " dB", gainCard.getX(), gainCard.getY() + 32, gainCard.getWidth(), 38, juce::Justification::centred);
+        g.drawText(juce::String(gain, 1) + " dB", gainCard.getX(), gainCard.getY() + 28, gainCard.getWidth(), 36, juce::Justification::centred);
     }
 
     // Bi-directional AGC Meter Bar
     float meterBarX = static_cast<float>(gainCard.getX() + 20);
-    float meterBarY = static_cast<float>(gainCard.getY() + 74);
+    float meterBarY = static_cast<float>(gainCard.getY() + 70);
     float meterBarW = static_cast<float>(gainCard.getWidth() - 40);
     float meterBarH = 10.0f;
     g.setColour(juce::Colour(0xff0a0c10));
@@ -695,50 +737,26 @@ void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setColour(juce::Colour(0xff2d3646));
     g.drawVerticalLine(static_cast<int>(centerBarX), meterBarY - 2.0f, meterBarY + meterBarH + 2.0f);
 
-    // Target & Slew / Breakdown state
-    if (m_latestState.isFrozen) {
-        juce::Rectangle<float> frozenBadge(meterBarX, static_cast<float>(gainCard.getY() + 124), meterBarW, 22.0f);
-        g.setColour(juce::Colour(0xffffb300).withAlpha(0.2f));
-        g.fillRoundedRectangle(frozenBadge, 4.0f);
-        g.setColour(juce::Colour(0xffffb300));
-        g.drawRoundedRectangle(frozenBadge, 4.0f, 1.0f);
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        g.drawText("BREAKDOWN FROZEN", frozenBadge, juce::Justification::centred);
-    } else {
-        g.setColour(juce::Colour(0xff9aa3b0));
-        g.setFont(juce::FontOptions(11.0f, juce::Font::plain));
-        juce::String hlStr = (m_latestState.activeHalfLifeSeconds > 0.0f)
-            ? ("T1/2: " + juce::String(static_cast<int>(m_latestState.activeHalfLifeSeconds)) + "s")
-            : "Track Hold";
-        g.drawText("Target: " + juce::String(m_latestState.targetGainDb, 1) + " dB (" + hlStr + ")", gainCard.getX(), gainCard.getY() + 94, gainCard.getWidth(), 18, juce::Justification::centred);
-
-        // Limiter Status
-        juce::Rectangle<float> limBadge(meterBarX, static_cast<float>(gainCard.getY() + 124), meterBarW, 22.0f);
-        g.setColour(juce::Colour(0xff18202c));
-        g.fillRoundedRectangle(limBadge, 4.0f);
-
-        float limGr = m_latestState.limiterGainReductionDb;
-        if (limGr < -0.1f) {
-            g.setColour(juce::Colour(0xffff3366));
-            g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
-            g.drawText("LIMITER ENGAGED (" + juce::String(limGr, 1) + " dB)", limBadge, juce::Justification::centred);
-        } else {
-            g.setColour(juce::Colour(0xff00e676));
-            g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
-            g.drawText("LIMITER READY (-1.5 dBFS)", limBadge, juce::Justification::centred);
-        }
-    }
+    // Target & Half-life readout
+    g.setColour(juce::Colour(0xff9aa3b0));
+    g.setFont(juce::FontOptions(11.0f, juce::Font::plain));
+    juce::String hlStr = (m_latestState.activeHalfLifeSeconds > 0.0f)
+        ? ("T1/2: " + juce::String(static_cast<int>(m_latestState.activeHalfLifeSeconds)) + "s")
+        : "Track Hold";
+    juce::String targetSign = (m_latestState.targetGainDb >= 0.0f) ? "+" : "";
+    g.drawText("Target: " + targetSign + juce::String(m_latestState.targetGainDb, 1) + " dB (" + hlStr + ")",
+               gainCard.getX(), gainCard.getY() + 88, gainCard.getWidth(), 18, juce::Justification::centred);
 
     // Card 3: Tone Target & Profile Visualizer (Right)
-    juce::Rectangle<int> profileCard(500, 64, 300, 160);
+    juce::Rectangle<int> profileCard(520, 64, 300, 162);
     drawCard(profileCard, "TONAL TARGET & SPECTRUM CURVE");
 
     // Card 4: 6-Band Dynamics Metering Card (Middle Full Width)
-    juce::Rectangle<int> mbcCard(20, 232, 780, 142);
+    juce::Rectangle<int> mbcCard(20, 236, 800, 158);
     drawCard(mbcCard, "DYNAMIC TONE SHAPER (6-BAND CROSSOVER DYNAMICS)");
 
-    // Card 5: Parameters Panel (Bottom)
-    juce::Rectangle<int> ctrlCard(20, 382, 780, 222);
+    // Card 5: Parameters Panel (Bottom Full Width)
+    juce::Rectangle<int> ctrlCard(20, 404, 800, 244);
     drawCard(ctrlCard, "MASTER PROCESSOR CONTROLS");
 }
 
@@ -748,22 +766,31 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     m_resetButton.setBounds(getWidth() - 326, 13, 200, 28);
 
     // Profile Card Controls
-    m_pinkNoiseBtn.setBounds(512, 94, 132, 28);
-    m_modernMixBtn.setBounds(652, 94, 136, 28);
-    m_profileDescLabel.setBounds(512, 126, 276, 20);
+    m_pinkNoiseBtn.setBounds(530, 92, 136, 26);
+    m_modernMixBtn.setBounds(674, 92, 136, 26);
+    m_profileDescLabel.setBounds(524, 120, 292, 16);
 
     // Tone Curve Visualizer inside Profile Card
-    m_toneVisualizer.setBounds(512, 148, 276, 68);
+    m_toneVisualizer.setBounds(530, 138, 280, 80);
+
+    // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
+    m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
+
+    // MBC Speed Controls inside Card 4 header
+    m_mbcSpeedLabel.setBounds(495, 242, 85, 20);
+    m_speedSlowBtn.setBounds(585, 242, 68, 20);
+    m_speedNormalBtn.setBounds(658, 242, 76, 20);
+    m_speedFastBtn.setBounds(739, 242, 68, 20);
 
     // 6-Band Meter Rack inside MBC Card
-    m_meterRack.setBounds(28, 258, 764, 108);
+    m_meterRack.setBounds(26, 266, 788, 120);
 
     // Controls Row 1 (Primary Master Knobs)
-    int row1Y = 406;
-    int knobW = 96;
-    int knobH = 92;
-    int colSpacing = 188;
-    int startX = 40;
+    int row1Y = 424;
+    int knobW = 100;
+    int knobH = 88;
+    int colSpacing = 195;
+    int startX = 35;
 
     m_targetLufsLabel.setBounds(startX, row1Y, knobW, 14);
     m_targetLufsSlider.setBounds(startX, row1Y + 14, knobW, knobH);
@@ -777,8 +804,8 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     m_toneSlopeLabel.setBounds(startX + 3 * colSpacing, row1Y, knobW, 14);
     m_toneSlopeSlider.setBounds(startX + 3 * colSpacing, row1Y + 14, knobW, knobH);
 
-    // Controls Row 2 (Secondary Knobs & Toggle)
-    int row2Y = 512;
+    // Controls Row 2 (Secondary Knobs: Boost, Cut, Post-MBC Gain, Limiter Ceiling)
+    int row2Y = 536;
 
     m_maxBoostLabel.setBounds(startX, row2Y, knobW, 14);
     m_maxBoostSlider.setBounds(startX, row2Y + 14, knobW, knobH);
@@ -786,8 +813,9 @@ void AutoLevelDJAudioProcessorEditor::resized() {
     m_maxCutLabel.setBounds(startX + colSpacing, row2Y, knobW, 14);
     m_maxCutSlider.setBounds(startX + colSpacing, row2Y + 14, knobW, knobH);
 
-    m_ceilingLabel.setBounds(startX + 2 * colSpacing, row2Y, knobW, 14);
-    m_ceilingSlider.setBounds(startX + 2 * colSpacing, row2Y + 14, knobW, knobH);
+    m_postGainLabel.setBounds(startX + 2 * colSpacing, row2Y, knobW, 14);
+    m_postGainSlider.setBounds(startX + 2 * colSpacing, row2Y + 14, knobW, knobH);
 
-    m_freezeBreakdownsButton.setBounds(startX + 3 * colSpacing - 10, row2Y + 32, 160, 32);
+    m_ceilingLabel.setBounds(startX + 3 * colSpacing, row2Y, knobW, 14);
+    m_ceilingSlider.setBounds(startX + 3 * colSpacing, row2Y + 14, knobW, knobH);
 }

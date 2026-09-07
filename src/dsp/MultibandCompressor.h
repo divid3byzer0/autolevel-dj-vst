@@ -8,12 +8,19 @@
 
 namespace autolevel::dsp {
 
+enum class MBCSpeed {
+    SLOW,
+    NORMAL,
+    FAST
+};
+
 struct MBCParams {
     bool enabled = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
     float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-6.0 to 0.0 dB/oct, default -2.0)
     TargetProfile profile = TargetProfile::MODERN_MIX;
     float baseThresholdDb = Bands::MBC_THRESHOLD_DB;
+    MBCSpeed speed = MBCSpeed::NORMAL;
 };
 
 class BandCompressor {
@@ -22,9 +29,13 @@ public:
 
     void setup(double sampleRate, float attackMs, float releaseMs) {
         m_sampleRate = sampleRate;
-        m_attackCoeff = std::exp(-1.0 / (sampleRate * (attackMs * 0.001)));
-        m_releaseCoeff = std::exp(-1.0 / (sampleRate * (releaseMs * 0.001)));
+        updateBallistics(attackMs, releaseMs);
         reset();
+    }
+
+    void updateBallistics(float attackMs, float releaseMs) noexcept {
+        m_attackCoeff = std::exp(-1.0 / (m_sampleRate * (attackMs * 0.001)));
+        m_releaseCoeff = std::exp(-1.0 / (m_sampleRate * (releaseMs * 0.001)));
     }
 
     void reset() {
@@ -133,6 +144,33 @@ public:
         }
     }
 
+    void updateSpeed(MBCSpeed speed) {
+        if (speed == m_currentSpeed) return;
+        m_currentSpeed = speed;
+
+        float subAttack = 30.0f;
+        float subRelease = 400.0f;
+        float otherAttack = 15.0f;
+        float otherRelease = 200.0f;
+
+        if (speed == MBCSpeed::SLOW) {
+            subAttack = 60.0f;
+            subRelease = 800.0f;
+            otherAttack = 30.0f;
+            otherRelease = 400.0f;
+        } else if (speed == MBCSpeed::FAST) {
+            subAttack = 15.0f;
+            subRelease = 200.0f;
+            otherAttack = 7.5f;
+            otherRelease = 100.0f;
+        }
+
+        m_bands[0].updateBallistics(subAttack, subRelease);
+        for (size_t b = 1; b < Bands::COUNT; ++b) {
+            m_bands[b].updateBallistics(otherAttack, otherRelease);
+        }
+    }
+
     void process(float* left, float* right, size_t numSamples, const MBCParams& params) {
         if (!params.enabled || params.compressionAmount < Bands::MIN_COMPRESSION) {
             for (size_t b = 0; b < Bands::COUNT; ++b) {
@@ -140,6 +178,8 @@ public:
             }
             return;
         }
+
+        updateSpeed(params.speed);
 
         // Calculate thresholds per band using exact Android Shaper formula
         std::array<float, Bands::COUNT> thresholds = Bands::thresholdsFor(
@@ -213,6 +253,7 @@ private:
     std::array<std::array<LR4Filter, 5>, 2> m_hp;
 
     std::array<BandCompressor, Bands::COUNT> m_bands;
+    MBCSpeed m_currentSpeed = MBCSpeed::NORMAL;
 };
 
 } // namespace autolevel::dsp

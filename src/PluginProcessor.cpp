@@ -52,6 +52,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         juce::StringArray{"Pink Noise (Linear)", "Modern Mix (Contoured)"},
         1)); // Default: Modern Mix
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_MBC_SPEED, 1},
+        "MBC Speed",
+        juce::StringArray{"Slow", "Normal", "Fast"},
+        1)); // Default: Normal (middle)
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ID_POST_MBC_GAIN, 1},
+        "Post Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f,
+        juce::AudioParameterFloatAttributes().withLabel("dB")));
+
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_CEILING_DB, 1},
         "Limiter Ceiling",
@@ -85,6 +98,8 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_compressionAmountParam = m_apvts.getRawParameterValue(ID_COMPRESSION_AMOUNT);
     m_toneSlopeParam = m_apvts.getRawParameterValue(ID_TONE_SLOPE);
     m_targetProfileParam = m_apvts.getRawParameterValue(ID_TARGET_PROFILE);
+    m_mbcSpeedParam = m_apvts.getRawParameterValue(ID_MBC_SPEED);
+    m_postMbcGainParam = m_apvts.getRawParameterValue(ID_POST_MBC_GAIN);
     m_ceilingDbParam = m_apvts.getRawParameterValue(ID_CEILING_DB);
     m_freezeBreakdownsParam = m_apvts.getRawParameterValue(ID_FREEZE_BREAKDOWNS);
     m_bypassParam = m_apvts.getRawParameterValue(ID_BYPASS);
@@ -144,6 +159,12 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         ? autolevel::dsp::TargetProfile::PINK_NOISE
         : autolevel::dsp::TargetProfile::MODERN_MIX;
 
+    int speedIdx = m_mbcSpeedParam ? juce::roundToInt(m_mbcSpeedParam->load()) : 1;
+    if (speedIdx == 0) params.mbcSpeed = autolevel::dsp::MBCSpeed::SLOW;
+    else if (speedIdx == 2) params.mbcSpeed = autolevel::dsp::MBCSpeed::FAST;
+    else params.mbcSpeed = autolevel::dsp::MBCSpeed::NORMAL;
+
+    params.postMbcGainDb = m_postMbcGainParam ? m_postMbcGainParam->load() : 0.0f;
     params.ceilingDb = m_ceilingDbParam ? m_ceilingDbParam->load() : -1.5f;
     params.freezeBreakdowns = m_freezeBreakdownsParam ? (m_freezeBreakdownsParam->load() > 0.5f) : true;
     params.bypass = m_bypassParam ? (m_bypassParam->load() > 0.5f) : false;

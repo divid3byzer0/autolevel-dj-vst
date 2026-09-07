@@ -71,12 +71,12 @@ public:
 
     /**
      * Relative contour offsets (dB) for the MODERN_MIX profile from Android Shaper.kt:
-     * - Band 0 (20–120 Hz): +1.5 dB higher threshold -> punchy, full-bodied bass with headroom
-     * - Band 1 (120–400 Hz): -2.5 dB lower threshold -> clamps down on muddy/boxy build-up
-     * - Band 2 (400–1200 Hz): +0.5 dB neutral midrange body
-     * - Band 3 (1200–3500 Hz): +1.0 dB vocal presence and clarity
-     * - Band 4 (3500–8000 Hz): -2.0 dB lower threshold -> controls harshness, bite, and sibilance
-     * - Band 5 (8000–20000 Hz): +1.5 dB higher threshold -> open, airy sparkle
+     * - Band 0 (20-120 Hz): +1.5 dB higher threshold -> punchy, full-bodied bass with headroom
+     * - Band 1 (120-400 Hz): -2.5 dB lower threshold -> clamps down on muddy/boxy build-up
+     * - Band 2 (400-1200 Hz): +0.5 dB neutral midrange body
+     * - Band 3 (1200-3500 Hz): +1.0 dB vocal presence and clarity
+     * - Band 4 (3500-8000 Hz): -2.0 dB lower threshold -> controls harshness, bite, and sibilance
+     * - Band 5 (8000-20000 Hz): +1.5 dB higher threshold -> open, airy sparkle
      * Zero-sum contour (average offset is 0.0 dB) to preserve overall calibration.
      */
     static constexpr std::array<float, COUNT> MODERN_CONTOUR_DB = {

@@ -14,6 +14,8 @@ class ModernHardwareLookAndFeel : public juce::LookAndFeel_V4 {
 public:
     ModernHardwareLookAndFeel();
 
+    juce::Label* createSliderTextBox(juce::Slider& slider) override;
+
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPosProportional, float rotaryStartAngle,
                           float rotaryEndAngle, juce::Slider& slider) override;
@@ -113,9 +115,22 @@ private:
     // Profile Switcher (Tactile Segmented Buttons synced with APVTS Choice)
     juce::ComboBox m_profileBox; // APVTS bound
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_profileAttachment;
-    juce::TextButton m_pinkNoiseBtn{"PINK NOISE (FLAT)"};
-    juce::TextButton m_modernMixBtn{"MODERN MIX (CONTOURED)"};
+    juce::TextButton m_pinkNoiseBtn{"PINK NOISE"};
+    juce::TextButton m_modernMixBtn{"MODERN MIX"};
     juce::Label m_profileDescLabel;
+
+    // MBC Speed Switcher (Slow, Normal, Fast)
+    juce::ComboBox m_mbcSpeedBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_mbcSpeedAttachment;
+    juce::Label m_mbcSpeedLabel;
+    juce::TextButton m_speedSlowBtn{"SLOW"};
+    juce::TextButton m_speedNormalBtn{"NORMAL"};
+    juce::TextButton m_speedFastBtn{"FAST"};
+
+    // Post-MBC Gain stage
+    juce::Slider m_postGainSlider;
+    juce::Label m_postGainLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_postGainAttachment;
 
     juce::Slider m_maxBoostSlider;
     juce::Label m_maxBoostLabel;
