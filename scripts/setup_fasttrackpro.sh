@@ -17,11 +17,15 @@ fi
 
 TARGET_USER="${SUDO_USER:-$USER}"
 
-echo "[1/4] Writing ALSA modprobe configuration for Fast Track Pro..."
+echo "[1/4] Configuring ALSA modprobe for Fast Track Pro..."
+# Note: On Raspberry Pi 4, HDMI0 and HDMI1 occupy index 0 and 1.
+# Setting index=1 causes a conflict with vc4hdmi1.
+# For 2-in / 4-out simultaneously (DJ Master + Booth), Fast Track Pro uses standard USB 1.1 mode.
+# For 24-bit mode (2-in / 2-out), use device_setup=0x9.
 cat << 'EOF' > /etc/modprobe.d/fasttrackpro.conf
-# M-Audio Fast Track Pro 24-bit 2-in / 4-out mode
-# device_setup=0x1 enables 24-bit depth, 44.1/48kHz, 2 analog in + 4 analog out
-options snd_usb_audio vid=0x0763 pid=0x2012 device_setup=0x1 index=1
+# M-Audio Fast Track Pro ALSA configuration
+# Do not force index=1 to avoid collision with Raspberry Pi 4 HDMI audio
+options snd-usb-audio vid=0x0763 pid=0x2012
 EOF
 
 echo "Configuration written to /etc/modprobe.d/fasttrackpro.conf."
