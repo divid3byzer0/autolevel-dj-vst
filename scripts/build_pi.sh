@@ -70,20 +70,52 @@ echo "[4/5] Running DSP unit tests to verify bit-perfect accuracy..."
 
 # 5. Install plugins
 echo "[5/5] Installing plugins to user and system audio directories..."
-mkdir -p "$HOME/.vst3"
-mkdir -p "$HOME/.lv2"
+# Find the actual non-root user's home if running under sudo or root
+NON_ROOT_USER="${SUDO_USER:-patch}"
+NON_ROOT_HOME=$(eval echo "~$NON_ROOT_USER" 2>/dev/null || echo "/home/patch")
 
-cp -R "build-pi/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3" "$HOME/.vst3/" || \
-cp -R "build-pi/AutoLevelDJ_artefacts/VST3/AutoLevel DJ.vst3" "$HOME/.vst3/"
+mkdir -p "$HOME/.vst3" "$HOME/.lv2"
+mkdir -p "$NON_ROOT_HOME/.vst3" "$NON_ROOT_HOME/.lv2"
+sudo mkdir -p /usr/local/lib/lv2 /var/modep/lv2 2>/dev/null || true
 
-cp -R "build-pi/AutoLevelDJ_artefacts/Release/LV2/AutoLevel DJ.lv2" "$HOME/.lv2/" || \
-cp -R "build-pi/AutoLevelDJ_artefacts/LV2/AutoLevel DJ.lv2" "$HOME/.lv2/"
+# Copy LV2
+SRC_LV2=""
+if [ -d "build-pi/AutoLevelDJ_artefacts/Release/LV2/AutoLevel DJ.lv2" ]; then
+    SRC_LV2="build-pi/AutoLevelDJ_artefacts/Release/LV2/AutoLevel DJ.lv2"
+elif [ -d "build-pi/AutoLevelDJ_artefacts/LV2/AutoLevel DJ.lv2" ]; then
+    SRC_LV2="build-pi/AutoLevelDJ_artefacts/LV2/AutoLevel DJ.lv2"
+fi
 
-# If MODEP is installed, also copy into MODEP LV2 directory
-if [ -d "/var/modep/lv2" ]; then
-    echo "MODEP detected. Installing to /var/modep/lv2..."
-    sudo cp -R "$HOME/.lv2/AutoLevel DJ.lv2" /var/modep/lv2/
+if [ -n "$SRC_LV2" ]; then
+    cp -R "$SRC_LV2" "$HOME/.lv2/"
+    cp -R "$SRC_LV2" "$NON_ROOT_HOME/.lv2/" 2>/dev/null || true
+    sudo cp -R "$SRC_LV2" /usr/local/lib/lv2/
+    sudo cp -R "$SRC_LV2" /var/modep/lv2/ 2>/dev/null || true
+    
+    # Ensure world-readable permissions so the 'modep' user can read them
+    sudo chmod -R 755 "/usr/local/lib/lv2/AutoLevel DJ.lv2"
+    sudo chmod -R 755 "/var/modep/lv2/AutoLevel DJ.lv2" 2>/dev/null || true
     sudo chown -R modep:modep "/var/modep/lv2/AutoLevel DJ.lv2" 2>/dev/null || true
+fi
+
+# Copy VST3
+SRC_VST3=""
+if [ -d "build-pi/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3" ]; then
+    SRC_VST3="build-pi/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3"
+elif [ -d "build-pi/AutoLevelDJ_artefacts/VST3/AutoLevel DJ.vst3" ]; then
+    SRC_VST3="build-pi/AutoLevelDJ_artefacts/VST3/AutoLevel DJ.vst3"
+fi
+
+if [ -n "$SRC_VST3" ]; then
+    cp -R "$SRC_VST3" "$HOME/.vst3/"
+    cp -R "$SRC_VST3" "$NON_ROOT_HOME/.vst3/" 2>/dev/null || true
+    sudo cp -R "$SRC_VST3" /usr/local/lib/vst3/ 2>/dev/null || true
+fi
+
+# If MODEP is running, restart it to index new plugins
+if systemctl is-active --quiet modep-mod-ui 2>/dev/null; then
+    echo "Restarting MODEP services to index new plugins..."
+    sudo systemctl restart modep-mod-ui modep-mod-host || true
 fi
 
 echo "=========================================================="
