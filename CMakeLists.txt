@@ -11,7 +11,13 @@ FetchContent_Declare(
     GIT_TAG 8.0.6
     GIT_SHALLOW TRUE
 )
-FetchContent_MakeAvailable(juce)
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.15.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(juce httplib)
 
 if (APPLE)
     set(PLUGIN_FORMATS VST3 AU Standalone)
@@ -70,6 +76,44 @@ target_compile_definitions(AutoLevelDJ PRIVATE
 # Offline DSP unit test executable
 add_executable(dsp_test tests/dsp_test.cpp)
 target_include_directories(dsp_test PRIVATE src)
+
+# Dedicated Standalone Web Server executable
+add_executable(autolevel_web
+    src/web/MainWeb.cpp
+    src/web/WebServer.h
+    src/web/WebServer.cpp
+    src/PluginProcessor.h
+    src/PluginProcessor.cpp
+    src/PluginEditor.h
+    src/PluginEditor.cpp
+    src/dsp/KWeightingFilter.h
+    src/dsp/LoudnessMeter.h
+    src/dsp/Leveler.h
+    src/dsp/Bands.h
+    src/dsp/Biquad.h
+    src/dsp/MultibandCompressor.h
+    src/dsp/SafetyLimiter.h
+    src/dsp/AutoLevelEngine.h
+)
+
+target_include_directories(autolevel_web PRIVATE src)
+
+target_link_libraries(autolevel_web PRIVATE
+    httplib::httplib
+    juce::juce_audio_utils
+    juce::juce_audio_devices
+    juce::juce_audio_processors
+    juce::juce_dsp
+    juce::juce_gui_basics
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
+
+target_compile_definitions(autolevel_web PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
 
 # Convenience target to install VST3 and AU into user's audio plugin folder
 if (APPLE)

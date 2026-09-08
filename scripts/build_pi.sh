@@ -118,9 +118,21 @@ if systemctl is-active --quiet modep-mod-ui 2>/dev/null; then
     sudo systemctl restart modep-mod-ui modep-mod-host || true
 fi
 
+# Install autolevel-web binary and web assets
+if [ -f "build-pi/autolevel_web" ]; then
+    echo "Installing AutoLevel DJ Web Server to /usr/local/bin/autolevel-web..."
+    sudo cp "build-pi/autolevel_web" /usr/local/bin/autolevel-web
+    sudo chmod 755 /usr/local/bin/autolevel-web
+    sudo mkdir -p /usr/local/share/autolevel-dj/web
+    sudo cp -R "${REPO_ROOT}/web/"* /usr/local/share/autolevel-dj/web/
+    sudo chmod -R 755 /usr/local/share/autolevel-dj/web
+fi
+
 echo "=========================================================="
 echo "   AutoLevel DJ successfully built and installed!"
-echo "   LV2:        $HOME/.lv2/AutoLevel DJ.lv2"
+echo "   Web Server: /usr/local/bin/autolevel-web"
+echo "   Web Assets: /usr/local/share/autolevel-dj/web"
+echo "   LV2:        /usr/local/lib/lv2/AutoLevel DJ.lv2"
 echo "   VST3:       $HOME/.vst3/AutoLevel DJ.vst3"
 echo "   Standalone: ${REPO_ROOT}/build-pi/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ"
 echo "=========================================================="

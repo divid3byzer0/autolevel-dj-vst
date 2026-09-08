@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AutoLevel DJ - Live Master Processor</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- TOP HEADER -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-badge">PRO</div>
+                <div class="brand-titles">
+                    <h1>AUTOLEVEL <span>DJ</span></h1>
+                    <span class="subtitle">Broadcast Master Bus Leveler</span>
+                </div>
+            </div>
+
+            <div class="header-status">
+                <div class="status-indicator">
+                    <span class="pulse-dot" id="connection-dot"></span>
+                    <span class="status-text" id="connection-status">CONNECTING</span>
+                </div>
+                <div class="device-pill" id="audio-device-info">JACK • 48kHz</div>
+            </div>
+
+            <div class="header-actions">
+                <button class="btn-action" id="btn-reset" title="Reset Integration History">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <span>RESET</span>
+                </button>
+                <button class="btn-toggle btn-bypass" id="btn-bypass" data-active="false">
+                    <span class="indicator-led"></span>
+                    <span>BYPASS</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN DASHBOARD -->
+        <main class="dashboard-grid">
+            
+            <!-- SECTION 1: LOUDNESS & METERS -->
+            <section class="card meters-card">
+                <div class="card-header">
+                    <h2>BROADCAST METERS</h2>
+                    <span class="breakdown-badge" id="freeze-badge">FREEZE IDLE</span>
+                </div>
+
+                <div class="lufs-dual-display">
+                    <div class="lufs-block">
+                        <span class="lufs-label">MOMENTARY</span>
+                        <div class="lufs-value-box">
+                            <span class="lufs-num" id="val-momentary">-14.0</span>
+                            <span class="lufs-unit">LUFS</span>
+                        </div>
+                        <div class="meter-bar-track">
+                            <div class="meter-bar-fill" id="meter-momentary"></div>
+                            <div class="target-marker" id="marker-momentary"></div>
+                        </div>
+                    </div>
+
+                    <div class="lufs-block">
+                        <span class="lufs-label">INTEGRATED</span>
+                        <div class="lufs-value-box">
+                            <span class="lufs-num" id="val-integrated">-14.0</span>
+                            <span class="lufs-unit">LUFS</span>
+                        </div>
+                        <div class="meter-bar-track">
+                            <div class="meter-bar-fill" id="meter-integrated"></div>
+                            <div class="target-marker" id="marker-integrated"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DYNAMICS & PEAK METERS -->
+                <div class="sub-meters-grid">
+                    <div class="gain-rider-box">
+                        <div class="sub-meter-label">
+                            <span>LEVEL RIDER</span>
+                            <span class="sub-meter-val" id="val-rider">+0.0 dB</span>
+                        </div>
+                        <div class="bipolar-track">
+                            <div class="bipolar-center"></div>
+                            <div class="bipolar-fill" id="meter-rider"></div>
+                        </div>
+                        <div class="scale-ticks">
+                            <span>-18</span><span>-12</span><span>-6</span><span>0</span><span>+6</span><span>+12</span>
+                        </div>
+                    </div>
+
+                    <div class="limiter-gr-box">
+                        <div class="sub-meter-label">
+                            <span>LIMITER GR</span>
+                            <span class="sub-meter-val gr-val" id="val-limiter-gr">0.0 dB</span>
+                        </div>
+                        <div class="meter-bar-track gr-track">
+                            <div class="gr-bar-fill" id="meter-limiter-gr"></div>
+                        </div>
+                        <div class="scale-ticks">
+                            <span>0</span><span>-1</span><span>-2</span><span>-4</span><span>-6 dB</span>
+                        </div>
+                    </div>
+
+                    <div class="stereo-peak-box">
+                        <div class="sub-meter-label">
+                            <span>TRUE PEAK</span>
+                            <span class="sub-meter-val" id="val-peak">-0.3 dBFS</span>
+                        </div>
+                        <div class="stereo-tracks">
+                            <div class="peak-channel">
+                                <span class="ch-tag">L</span>
+                                <div class="peak-track"><div class="peak-fill" id="peak-l"></div></div>
+                                <span class="clip-led" id="clip-l"></span>
+                            </div>
+                            <div class="peak-channel">
+                                <span class="ch-tag">R</span>
+                                <div class="peak-track"><div class="peak-fill" id="peak-r"></div></div>
+                                <span class="clip-led" id="clip-r"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 2: 6-BAND DYNAMIC TONE VISUALIZER -->
+            <section class="card tone-card">
+                <div class="card-header">
+                    <h2>DYNAMIC 6-BAND TONE SHAPER</h2>
+                    <div class="profile-mode-tag" id="active-profile-tag">MODERN MIX</div>
+                </div>
+                <div class="canvas-wrapper">
+                    <canvas id="tone-canvas" width="800" height="240"></canvas>
+                </div>
+                <div class="bands-footer">
+                    <div class="band-tag" data-band="0">SUB<br><small>&lt;80Hz</small></div>
+                    <div class="band-tag" data-band="1">BASS<br><small>80-250</small></div>
+                    <div class="band-tag" data-band="2">LO-MID<br><small>250-1k</small></div>
+                    <div class="band-tag" data-band="3">HI-MID<br><small>1k-4k</small></div>
+                    <div class="band-tag" data-band="4">PRESENCE<br><small>4k-8k</small></div>
+                    <div class="band-tag" data-band="5">AIR<br><small>&gt;8k</small></div>
+                </div>
+            </section>
+
+            <!-- SECTION 3: PRIMARY TOUCH FADERS -->
+            <section class="card controls-card">
+                <div class="card-header">
+                    <h2>PRIMARY GAIN & TONE CONTROLS</h2>
+                </div>
+
+                <div class="faders-grid">
+                    <!-- TARGET LUFS -->
+                    <div class="fader-group" id="group-target-lufs">
+                        <div class="fader-header">
+                            <label for="fader-target-lufs">TARGET LUFS</label>
+                            <span class="fader-val" id="num-target-lufs">-14.0 LUFS</span>
+                        </div>
+                        <input type="range" class="fader-slider" id="fader-target-lufs" min="-24.0" max="-8.0" step="0.5" value="-14.0">
+                        <div class="fader-range-labels">
+                            <span>-24 (Quiet)</span>
+                            <span>-14 (Stream)</span>
+                            <span>-9 (Club)</span>
+                        </div>
+                    </div>
+
+                    <!-- LEVEL RESPONSE SPEED -->
+                    <div class="fader-group" id="group-level-response">
+                        <div class="fader-header">
+                            <label for="fader-level-response">LEVEL RESPONSE</label>
+                            <span class="fader-val" id="num-level-response">0.85 (Medium)</span>
+                        </div>
+                        <input type="range" class="fader-slider" id="fader-level-response" min="0.0" max="1.0" step="0.05" value="0.85">
+                        <div class="fader-range-labels">
+                            <span>Hold (0.0)</span>
+                            <span>Smooth</span>
+                            <span>Fast (1.0)</span>
+                        </div>
+                    </div>
+
+                    <!-- DYNAMIC TONE SLOPE -->
+                    <div class="fader-group" id="group-tone-slope">
+                        <div class="fader-header">
+                            <label for="fader-tone-slope">TONE SLOPE</label>
+                            <span class="fader-val" id="num-tone-slope">-1.5 dB/oct</span>
+                        </div>
+                        <input type="range" class="fader-slider" id="fader-tone-slope" min="-6.0" max="0.0" step="0.1" value="-1.5">
+                        <div class="fader-range-labels">
+                            <span>-6.0 (Warm)</span>
+                            <span>-1.5 (Standard)</span>
+                            <span>0.0 (Bright)</span>
+                        </div>
+                    </div>
+
+                    <!-- SAFETY LIMITER CEILING -->
+                    <div class="fader-group" id="group-ceiling">
+                        <div class="fader-header">
+                            <label for="fader-ceiling">TRUE-PEAK CEILING</label>
+                            <span class="fader-val" id="num-ceiling">-0.3 dBFS</span>
+                        </div>
+                        <input type="range" class="fader-slider" id="fader-ceiling" min="-2.0" max="0.0" step="0.1" value="-0.3">
+                        <div class="fader-range-labels">
+                            <span>-2.0</span>
+                            <span>-1.0</span>
+                            <span>-0.3</span>
+                            <span>0.0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION 4: ENHANCERS & SWITCHES -->
+            <section class="card switches-card">
+                <div class="card-header">
+                    <h2>TONE PROFILE & DYNAMICS ENHANCERS</h2>
+                </div>
+
+                <div class="switches-grid">
+                    <!-- TARGET PROFILE SWITCH -->
+                    <div class="switch-box">
+                        <span class="switch-label">TARGET CONTOUR</span>
+                        <div class="segmented-control" id="seg-target-profile">
+                            <button class="seg-btn" data-value="0">Linear (Pink)</button>
+                            <button class="seg-btn active" data-value="1">Modern Mix</button>
+                        </div>
+                        <p class="switch-help">Modern Mix scoops boxy mud (-2.5dB @ 250Hz) and boosts sub punch (+1.5dB).</p>
+                    </div>
+
+                    <!-- MBC BALLISTICS SPEED -->
+                    <div class="switch-box">
+                        <span class="switch-label">MBC SPEED</span>
+                        <div class="segmented-control" id="seg-mbc-speed">
+                            <button class="seg-btn" data-value="0">Slow</button>
+                            <button class="seg-btn active" data-value="1">Normal</button>
+                            <button class="seg-btn" data-value="2">Fast</button>
+                        </div>
+                        <p class="switch-help">Multiband envelope ballistics for transients and drops.</p>
+                    </div>
+
+                    <!-- DYNAMIC BASS LIFT (DOLBY DUO) -->
+                    <div class="switch-box">
+                        <div class="enhancer-header">
+                            <span class="switch-label">DYNAMIC BASS LIFT</span>
+                            <span class="enhancer-reading" id="val-bass-lift">+0.0 dB</span>
+                        </div>
+                        <div class="segmented-control" id="seg-bass-lift">
+                            <button class="seg-btn active" data-value="0">Off</button>
+                            <button class="seg-btn" data-value="1">Low</button>
+                            <button class="seg-btn" data-value="2">Med</button>
+                            <button class="seg-btn" data-value="3">High</button>
+                        </div>
+                        <p class="switch-help">Upward expands weak low-end on vintage tracks with adaptive mud lock.</p>
+                    </div>
+
+                    <!-- DYNAMIC AIR LIFT (DOLBY DUO) -->
+                    <div class="switch-box">
+                        <div class="enhancer-header">
+                            <span class="switch-label">DYNAMIC AIR LIFT</span>
+                            <span class="enhancer-reading" id="val-air-lift">+0.0 dB</span>
+                        </div>
+                        <div class="segmented-control" id="seg-air-lift">
+                            <button class="seg-btn active" data-value="0">Off</button>
+                            <button class="seg-btn" data-value="1">Low</button>
+                            <button class="seg-btn" data-value="2">Med</button>
+                            <button class="seg-btn" data-value="3">High</button>
+                        </div>
+                        <p class="switch-help">Silky top-end breath above 6.5kHz with sibilance ducking.</p>
+                    </div>
+
+                    <!-- SUBSONIC HPF -->
+                    <div class="switch-box">
+                        <span class="switch-label">SUBSONIC FILTER (30Hz)</span>
+                        <div class="segmented-control" id="seg-hpf">
+                            <button class="seg-btn" data-value="0">Off</button>
+                            <button class="seg-btn active" data-value="1">30Hz (24dB/oct)</button>
+                        </div>
+                        <p class="switch-help">Eliminates amplifier-choking turntable rumble and sub-bass DC.</p>
+                    </div>
+
+                    <!-- BREAKDOWN FREEZE -->
+                    <div class="switch-box">
+                        <span class="switch-label">BREAKDOWN FREEZE</span>
+                        <div class="segmented-control" id="seg-freeze">
+                            <button class="seg-btn" data-value="0">Off</button>
+                            <button class="seg-btn active" data-value="1">Auto Freeze</button>
+                        </div>
+                        <p class="switch-help">Locks gain boost during intros and quiet breakdowns to preserve the drop punch.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- FOOTER -->
+        <footer class="app-footer">
+            <span>AutoLevel DJ • Hardware Audio Engine</span>
+            <span>DistrictNoir • Fast Track Pro 24-Bit Profile</span>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
