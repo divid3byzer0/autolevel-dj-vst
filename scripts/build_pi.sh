@@ -14,6 +14,7 @@ echo "=== AutoLevel DJ: Raspberry Pi 4 Build Setup ==="
 echo "[1/5] Checking and installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y \
+    pkg-config \
     cmake \
     ninja-build \
     build-essential \
@@ -21,6 +22,7 @@ sudo apt-get install -y \
     libasound2-dev \
     libjack-jackd2-dev \
     libfreetype6-dev \
+    libfontconfig1-dev \
     libgl1-mesa-dev \
     libx11-dev \
     libxcomposite-dev \
@@ -30,12 +32,25 @@ sudo apt-get install -y \
     libxrandr-dev \
     libxrender-dev
 
+# Ensure FreeType headers are visible to the compiler
+if [ -d /usr/include/freetype2 ]; then
+    sudo ln -sf /usr/include/freetype2/ft2build.h /usr/include/ft2build.h 2>/dev/null || true
+    sudo ln -sf /usr/include/freetype2/freetype /usr/include/freetype 2>/dev/null || true
+fi
+export CPATH="/usr/include/freetype2:${CPATH}"
+
 # 2. Configure CMake with ARM Cortex-A72 optimization
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 echo "[2/5] Configuring CMake (Release build with Cortex-A72 optimizations)..."
 cd "${REPO_ROOT}"
+
+# Remove stale build folder if previous configuration failed
+if [ -d "build-pi" ] && [ ! -f "build-pi/build.ninja" ]; then
+    echo "Cleaning incomplete build directory..."
+    rm -rf build-pi
+fi
 
 # Enable Cortex-A72 tuning flags for Raspberry Pi 4
 export CXXFLAGS="-O3 -mcpu=cortex-a72 -mtune=cortex-a72"
