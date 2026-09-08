@@ -15,8 +15,10 @@ FetchContent_MakeAvailable(juce)
 
 if (APPLE)
     set(PLUGIN_FORMATS VST3 AU Standalone)
-else()
+elseif (WIN32)
     set(PLUGIN_FORMATS VST3 Standalone)
+else()
+    set(PLUGIN_FORMATS VST3 Standalone LV2)
 endif()
 
 juce_add_plugin(AutoLevelDJ
@@ -25,6 +27,7 @@ juce_add_plugin(AutoLevelDJ
     PLUGIN_CODE AlDj
     FORMATS ${PLUGIN_FORMATS}
     PRODUCT_NAME "AutoLevel DJ"
+    LV2URI "https://districtnoir.com/plugins/autolevel-dj"
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
@@ -84,6 +87,19 @@ elseif (WIN32)
             "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
             "$ENV{COMMONPROGRAMFILES}/VST3/AutoLevel DJ.vst3"
         COMMENT "Installing VST3 plugin to %COMMONPROGRAMFILES%/VST3..."
+        VERBATIM
+    )
+elseif (UNIX AND NOT APPLE)
+    add_custom_target(install_plugins
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/.vst3"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/.lv2"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/VST3/AutoLevel DJ.vst3"
+            "$ENV{HOME}/.vst3/AutoLevel DJ.vst3"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/AutoLevelDJ_artefacts/$<CONFIG>/LV2/AutoLevel DJ.lv2"
+            "$ENV{HOME}/.lv2/AutoLevel DJ.lv2"
+        COMMENT "Installing VST3 and LV2 plugins to ~/.vst3 and ~/.lv2..."
         VERBATIM
     )
 endif()

@@ -65,14 +65,19 @@ Audio Out (Clean, Leveled, Punchy Audio to Amps)
 
 ## Formats & Deployment
 
-AutoLevel DJ builds for macOS (optimized for Apple Silicon / M-series chips):
+AutoLevel DJ builds for macOS (Universal Binary), Windows (x64 / x86), and Linux ARM64 (Raspberry Pi 4):
 
-1. **VST3 / AU:**
-   * Load directly onto the Master track inside **Ableton Live**, **FL Studio**, **Logic Pro**, or **Bitwig**.
-2. **Standalone macOS App (`AutoLevel DJ.app`):**
+1. **VST3 / AU / LV2:**
+   * Load directly onto the Master track inside **Ableton Live**, **FL Studio**, **Logic Pro**, **Bitwig**, or web-based hosts like **MODEP** and **Carla**.
+2. **Standalone App (macOS / Windows / Linux):**
    * If you use DJ software that doesn't host VSTs (e.g. **Traktor**, **Rekordbox**, **Serato**, **VirtualDJ**):
    * Route your DJ software output into a virtual loopback device (such as **BlackHole** or Rogue Amoeba **Loopback**).
-   * Open `AutoLevel DJ.app`, select the loopback device as Input, and your physical audio interface / DAC as Output.
+   * Open the Standalone app, select the loopback device as Input, and your physical audio interface / DAC as Output.
+3. **Raspberry Pi 4 Live DJ "Black Box":**
+   * Run AutoLevel DJ on a headless **Raspberry Pi 4 Model B** with an **M-Audio Fast Track Pro** USB interface.
+   * Acts as an autonomous hardware audio processor: connect DJ mixer master out into the Pi, connect Pi outputs to the PA system and booth monitor.
+   * Tweak controls in real time over local Wi-Fi from your smartphone or iPad browser via MODEP or Carla.
+   * See the complete guide: [docs/RASPBERRY_PI_SETUP.md](file:///Volumes/Satechi/GitHub/autolevel-dj-vst/docs/RASPBERRY_PI_SETUP.md).
 
 ---
 
@@ -131,7 +136,7 @@ Compiled plugins will be located in:
 
 ## Pre-built Releases
 
-Pre-compiled binary packages for macOS and Windows are published under [GitHub Releases](https://github.com/divid3byzer0/autolevel-dj-vst/releases).
+Pre-compiled binary packages for macOS, Windows, and Linux ARM64 (Raspberry Pi) are published under [GitHub Releases](https://github.com/divid3byzer0/autolevel-dj-vst/releases).
 
 ---
 
