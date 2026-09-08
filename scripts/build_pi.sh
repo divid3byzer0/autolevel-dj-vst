@@ -39,21 +39,22 @@ if [ -d /usr/include/freetype2 ]; then
 fi
 export CPATH="/usr/include/freetype2:${CPATH}"
 
-# 2. Configure CMake with ARM Cortex-A72 optimization
+# 2. Configure CMake
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-echo "[2/5] Configuring CMake (Release build with Cortex-A72 optimizations)..."
+echo "[2/5] Configuring CMake..."
 cd "${REPO_ROOT}"
 
-# Remove stale build folder if previous configuration failed
-if [ -d "build-pi" ] && [ ! -f "build-pi/build.ninja" ]; then
-    echo "Cleaning incomplete build directory..."
-    rm -rf build-pi
-fi
+# Prevent Ninja from spawning too many parallel g++ processes.
+# JUCE translation units require up to 1.5 GB RAM each. Spawning 4-6 parallel
+# compiler jobs exceeds the 4GB RAM on the Pi, causing intense MicroSD swap
+# thrashing that freezes the machine for 30+ minutes.
+# Limiting to 2 parallel jobs guarantees everything stays in physical RAM!
+export CMAKE_BUILD_PARALLEL_LEVEL=2
 
-# Enable Cortex-A72 tuning flags for Raspberry Pi 4
-export CXXFLAGS="-O3 -mcpu=cortex-a72 -mtune=cortex-a72"
+# Clean build directory
+rm -rf build-pi
 
 cmake -B build-pi -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
@@ -61,7 +62,7 @@ cmake -B build-pi -G Ninja \
 
 # 3. Compile VST3, LV2, Standalone, and unit test suite
 echo "[3/5] Building AutoLevel DJ (VST3, LV2, Standalone)..."
-cmake --build build-pi --config Release -j$(nproc)
+cmake --build build-pi --config Release -j2
 
 # 4. Run DSP unit tests
 echo "[4/5] Running DSP unit tests to verify bit-perfect accuracy..."
