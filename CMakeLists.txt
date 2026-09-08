@@ -62,6 +62,11 @@ target_link_libraries(AutoLevelDJ PRIVATE
     juce::juce_recommended_warning_flags
 )
 
+target_compile_definitions(AutoLevelDJ PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+)
+
 # Offline DSP unit test executable
 add_executable(dsp_test tests/dsp_test.cpp)
 target_include_directories(dsp_test PRIVATE src)

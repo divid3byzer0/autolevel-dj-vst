@@ -23,6 +23,7 @@ sudo apt-get install -y \
     libjack-jackd2-dev \
     libfreetype6-dev \
     libfontconfig1-dev \
+    libgtk-3-dev \
     libgl1-mesa-dev \
     libx11-dev \
     libxcomposite-dev \
@@ -47,14 +48,13 @@ echo "[2/5] Configuring CMake..."
 cd "${REPO_ROOT}"
 
 # Prevent Ninja from spawning too many parallel g++ processes.
-# JUCE translation units require up to 1.5 GB RAM each. Spawning 4-6 parallel
-# compiler jobs exceeds the 4GB RAM on the Pi, causing intense MicroSD swap
-# thrashing that freezes the machine for 30+ minutes.
-# Limiting to 2 parallel jobs guarantees everything stays in physical RAM!
 export CMAKE_BUILD_PARALLEL_LEVEL=2
 
-# Clean build directory
-rm -rf build-pi
+# Only wipe build directory if explicitly asked or if previous config was broken
+if [ "$1" = "--clean" ] || [ -d "build-pi" -a ! -f "build-pi/build.ninja" ]; then
+    echo "Cleaning build directory..."
+    rm -rf build-pi
+fi
 
 cmake -B build-pi -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
