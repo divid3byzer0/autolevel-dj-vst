@@ -32,6 +32,8 @@ juce_add_plugin(AutoLevelDJ
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "AutoLevel DJ requires microphone/audio input access to process your live audio signal."
 )
 
 target_sources(AutoLevelDJ PRIVATE
