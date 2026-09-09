@@ -103,7 +103,8 @@ int main(int argc, char* argv[]) {
         if (type->getTypeName() == "JACK") {
             std::cout << "[MainWeb] Attempting to connect to JACK audio server..." << std::endl;
             deviceManager.setCurrentAudioDeviceType("JACK", true);
-            audioError = deviceManager.initialise(2, 2, nullptr, true);
+            // Do NOT fall back to default device on failure here, so we can try ALSA cleanly
+            audioError = deviceManager.initialise(2, 2, nullptr, false);
             if (audioError.isEmpty() && deviceManager.getCurrentAudioDevice() != nullptr) {
                 audioReady = true;
                 std::cout << "[MainWeb] Connected to JACK server successfully!" << std::endl;
@@ -114,42 +115,95 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 2. Fall back to ALSA and specifically search for Fast Track Pro
+    // 2. Fall back to ALSA and search for Fast Track Pro / USB audio hardware
     if (!audioReady) {
         std::cout << "[MainWeb] Attempting ALSA hardware detection..." << std::endl;
         deviceManager.setCurrentAudioDeviceType("ALSA", true);
 
-        juce::String preferredDevice = "";
         auto* alsaType = deviceManager.getCurrentDeviceTypeObject();
         if (alsaType != nullptr) {
             alsaType->scanForDevices();
             auto inputNames = alsaType->getDeviceNames(true);
             auto outputNames = alsaType->getDeviceNames(false);
 
-            std::cout << "[MainWeb] Detected ALSA input devices:" << std::endl;
+            std::cout << "[MainWeb] Detected ALSA input devices (" << inputNames.size() << "):" << std::endl;
+            for (int i = 0; i < inputNames.size(); ++i) {
+                std::cout << "   [IN #" << i << "] " << inputNames[i].toStdString() << std::endl;
+            }
+
+            std::cout << "[MainWeb] Detected ALSA output devices (" << outputNames.size() << "):" << std::endl;
+            for (int i = 0; i < outputNames.size(); ++i) {
+                std::cout << "   [OUT #" << i << "] " << outputNames[i].toStdString() << std::endl;
+            }
+
+            auto scoreDevice = [](const juce::String& name, bool /*isInput*/) -> int {
+                juce::String lower = name.toLowerCase();
+                // Exclude broken kernel usbstream pseudo-device and S/PDIF digital output
+                if (lower.contains("stream") || lower.contains("usbstream")) return -1000;
+                if (lower.contains("iec958") || lower.contains("spdif") || lower.contains("s/pdif")) return -1000;
+
+                int score = 0;
+                if (lower.contains("fasttrack") || lower.contains("fast track")) score += 1000;
+                else if (lower.contains("pro")) score += 500;
+                else if (lower.contains("usb")) score += 200;
+                else return -1000; // Require USB / FastTrack interface
+
+                if (lower.contains("direct hardware") || lower.contains("hw:")) score += 100;
+                else if (lower.contains("front")) score += 80;
+                else if (lower.contains("direct sample")) score += 60; // dmix / dsnoop
+                else if (lower.contains("default")) score += 40;
+
+                return score;
+            };
+
+            std::vector<std::pair<int, juce::String>> inCandidates;
             for (const auto& name : inputNames) {
-                std::cout << "   [IN]  " << name.toStdString() << std::endl;
-                if (name.containsIgnoreCase("FastTrack") || name.containsIgnoreCase("Pro") || name.containsIgnoreCase("USB")) {
-                    preferredDevice = name;
-                }
+                int s = scoreDevice(name, true);
+                if (s > 0) inCandidates.push_back({ s, name });
             }
+            std::sort(inCandidates.begin(), inCandidates.end(), [](auto& a, auto& b) { return a.first > b.first; });
 
-            std::cout << "[MainWeb] Detected ALSA output devices:" << std::endl;
+            std::vector<std::pair<int, juce::String>> outCandidates;
             for (const auto& name : outputNames) {
-                std::cout << "   [OUT] " << name.toStdString() << std::endl;
-                if (preferredDevice.isEmpty() && (name.containsIgnoreCase("FastTrack") || name.containsIgnoreCase("Pro") || name.containsIgnoreCase("USB"))) {
-                    preferredDevice = name;
-                }
+                int s = scoreDevice(name, false);
+                if (s > 0) outCandidates.push_back({ s, name });
             }
-        }
+            std::sort(outCandidates.begin(), outCandidates.end(), [](auto& a, auto& b) { return a.first > b.first; });
 
-        if (preferredDevice.isNotEmpty()) {
-            std::cout << "[MainWeb] Selecting detected USB interface: " << preferredDevice.toStdString() << std::endl;
-        }
+            std::cout << "[MainWeb] Found " << inCandidates.size() << " valid FastTrack inputs and "
+                      << outCandidates.size() << " valid FastTrack outputs." << std::endl;
 
-        audioError = deviceManager.initialise(2, 2, nullptr, true, preferredDevice);
-        if (audioError.isEmpty() && deviceManager.getCurrentAudioDevice() != nullptr) {
-            audioReady = true;
+            for (const auto& inCand : inCandidates) {
+                for (const auto& outCand : outCandidates) {
+                    std::cout << "[MainWeb] Testing ALSA pair:\n   IN:  " << inCand.second.toStdString() 
+                              << "\n   OUT: " << outCand.second.toStdString() << std::endl;
+
+                    juce::AudioDeviceManager::AudioDeviceSetup setup;
+                    deviceManager.getAudioDeviceSetup(setup);
+                    setup.inputDeviceName = inCand.second;
+                    setup.outputDeviceName = outCand.second;
+                    setup.useDefaultInputChannels = false;
+                    setup.useDefaultOutputChannels = false;
+                    setup.inputChannels.clear();
+                    setup.inputChannels.setBit(0);
+                    setup.inputChannels.setBit(1);
+                    setup.outputChannels.clear();
+                    setup.outputChannels.setBit(0);
+                    setup.outputChannels.setBit(1);
+                    setup.sampleRate = 0; // Auto-negotiate hardware rate
+                    setup.bufferSize = 0; // Auto-negotiate hardware buffer
+
+                    audioError = deviceManager.setAudioDeviceSetup(setup, true);
+                    if (audioError.isEmpty() && deviceManager.getCurrentAudioDevice() != nullptr) {
+                        audioReady = true;
+                        std::cout << "[MainWeb] Successfully opened Fast Track Pro ALSA audio device!" << std::endl;
+                        break;
+                    } else {
+                        std::cout << "[MainWeb] Pair failed: " << audioError.toStdString() << std::endl;
+                    }
+                }
+                if (audioReady) break;
+            }
         }
     }
 
