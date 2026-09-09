@@ -115,6 +115,13 @@ target_compile_definitions(autolevel_web PRIVATE
     JUCE_USE_CURL=0
 )
 
+if (UNIX AND NOT APPLE)
+    target_compile_definitions(autolevel_web PRIVATE
+        JUCE_JACK=1
+        JUCE_ALSA=1
+    )
+endif()
+
 # Convenience target to install VST3 and AU into user's audio plugin folder
 if (APPLE)
     add_custom_target(install_plugins
