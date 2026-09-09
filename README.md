@@ -1,8 +1,8 @@
 # AutoLevel DJ (VST3 / AU / Standalone)
 
-**Intelligent real-time master bus loudness leveling and multiband dynamic tone shaping for live DJ sets on macOS.**
+**Intelligent real-time master bus loudness leveling and multiband dynamic tone shaping for live DJ sets.**
 
-Designed to sit on the **master output** of your DJ mixer before the signal reaches your power amplifiers and sound system. It automatically rides gain and tames frequency imbalances across vastly different tracks so you can focus entirely on mixing, track selection, and transitions.
+Designed to sit on the **master output** of your DJ software or mixer before the signal reaches your power amplifiers and sound system. It automatically rides gain and tames frequency imbalances across vastly different tracks so you can focus entirely on mixing, track selection, and transitions.
 
 ---
 
@@ -11,7 +11,7 @@ Designed to sit on the **master output** of your DJ mixer before the signal reac
 1. **Vastly Different Mastering Standards:** Tracks in a DJ set span different eras and genres (e.g. 70s disco, 90s vinyl house, modern brickwall EDM). RMS/LUFS can vary wildly from −14 LUFS to −6 LUFS, forcing the DJ to constantly adjust trim gain.
 2. **Transition Swells & Pumping:** Two tracks playing together during a blend naturally sum higher in energy (+2 to +3 dB). Fast compressors or broadcast processors pump and suck the life out of drops and buildups.
 3. **Breakdown Drop Deflation:** A 45-second acoustic or percussion-less breakdown can trick normal AGC/levelers into boosting gain by several dB. When the drop arrives, it clips hard or blasts the audience.
-4. **Spectral Mismatches:** A 90s track might sound thin in the sub-bass compared to a 2024 tech-house track, or high-hats might be piercingly harsh at club volumes.
+4. **Spectral Mismatches:** A 90s track might sound thin in the sub-bass compared to a modern club track, or high-hats might be piercingly harsh at high sound system volumes.
 
 ---
 
@@ -45,7 +45,7 @@ Audio Out (Clean, Leveled, Punchy Audio to Amps)
 ```
 
 ### 1. Asymmetric Slew-Rate Gain Riding
-* **Downward Slew (Fast):** If a new track hits 4 dB too hot, the leveler cuts gain quickly to protect the sound system and ears.
+* **Downward Slew (Fast):** If a new track hits too hot, the leveler cuts gain quickly to protect the sound system and ears.
 * **Upward Slew (Slow & Musical):** When a quieter track comes in, the leveler slowly nudges gain upward at **0.75 dB/s**. This prevents audible pumping during song transitions and keeps track dynamics natural.
 * **Fast Lock:** On initial sound or manual reset, an 8-second fast-lock window quickly establishes the baseline level.
 
@@ -65,29 +65,22 @@ Audio Out (Clean, Leveled, Punchy Audio to Amps)
 
 ## Formats & Deployment
 
-AutoLevel DJ builds for macOS (Universal Binary), Windows (x64 / x86), and Linux ARM64 (Raspberry Pi 4):
+AutoLevel DJ is available for **macOS** (Apple Silicon & Intel Universal) and **Windows** (x64 / x86):
 
-1. **VST3 / AU / LV2:**
-   * Load directly onto the Master track inside **Ableton Live**, **FL Studio**, **Logic Pro**, **Bitwig**, or web-based hosts like **MODEP** and **Carla**.
-2. **Standalone App (macOS / Windows / Linux):**
-   * If you use DJ software that doesn't host VSTs (e.g. **Traktor**, **Rekordbox**, **Serato**, **VirtualDJ**):
-   * Route your DJ software output into a virtual loopback device (such as **BlackHole** or Rogue Amoeba **Loopback**).
+1. **VST3 & AU Plugin:**
+   * Load directly onto the Master track inside **Ableton Live**, **Logic Pro**, **FL Studio**, **Bitwig Studio**, **Cubase**, or any VST3/AU host DAW.
+2. **Standalone Application:**
+   * For DJ software without native plugin hosting (e.g. **Traktor Pro**, **Rekordbox**, **Serato DJ Pro**, **VirtualDJ**):
+   * Route your DJ software master output into a virtual loopback device (such as **BlackHole** or Rogue Amoeba **Loopback** on macOS, or **VB-Cable** on Windows).
    * Open the Standalone app, select the loopback device as Input, and your physical audio interface / DAC as Output.
-3. **Raspberry Pi 4 Live DJ "Black Box":**
-   * Run AutoLevel DJ on a headless **Raspberry Pi 4 Model B** with an **M-Audio Fast Track Pro** USB interface.
-   * Acts as an autonomous hardware audio processor: connect DJ mixer master out into the Pi, connect Pi outputs to the PA system and booth monitor.
-   * Tweak controls in real time over local Wi-Fi from your smartphone or iPad browser via MODEP or Carla.
-   * See the complete guide: [docs/RASPBERRY_PI_SETUP.md](file:///Volumes/Satechi/GitHub/autolevel-dj-vst/docs/RASPBERRY_PI_SETUP.md).
 
 ---
 
 ## Building from Source
 
 ### Requirements
-* macOS (Apple Silicon or Intel)
-* Xcode Command Line Tools (`xcode-select --install`)
-* CMake (`brew install cmake`)
-* Ninja (`brew install ninja`)
+* **macOS:** Xcode Command Line Tools (`xcode-select --install`), CMake (`brew install cmake`), Ninja (`brew install ninja`)
+* **Windows:** Visual Studio 2022 with C++ Desktop Development workload, CMake, Ninja
 
 ### Build Commands (macOS)
 
@@ -104,11 +97,12 @@ cmake --build build --config Release
 
 # Run the offline DSP verification tests
 ./build/dsp_test
+
+# Install plugins to ~/Library/Audio/Plug-Ins/
+cmake --build build --target install_plugins
 ```
 
 ### Build Commands (Windows x64 & x86)
-
-Requirements: Visual Studio 2022 with C++ Desktop Development workload.
 
 ```powershell
 # For 64-bit Windows (x64) - Standard for modern DAWs
@@ -121,14 +115,17 @@ cmake --build build-x86 --config Release
 
 # Run tests
 .\build-x64\Release\dsp_test.exe
+
+# Install plugin to %COMMONPROGRAMFILES%\VST3
+cmake --build build-x64 --target install_plugins --config Release
 ```
 
 Compiled plugins will be located in:
-* macOS:
+* **macOS:**
   * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
   * `build/AutoLevelDJ_artefacts/Release/AU/AutoLevel DJ.component`
   * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.app`
-* Windows:
+* **Windows:**
   * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
   * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
 
@@ -136,7 +133,7 @@ Compiled plugins will be located in:
 
 ## Pre-built Releases
 
-Pre-compiled binary packages for macOS, Windows, and Linux ARM64 (Raspberry Pi) are published under [GitHub Releases](https://github.com/divid3byzer0/autolevel-dj-vst/releases).
+Pre-compiled binary packages for macOS and Windows are published under [GitHub Releases](https://github.com/divid3byzer0/autolevel-dj-vst/releases).
 
 ---
 
