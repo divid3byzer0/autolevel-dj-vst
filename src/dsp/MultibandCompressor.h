@@ -16,9 +16,11 @@ enum class MBCSpeed {
 
 struct MBCParams {
     bool enabled = true;
+    bool autoMakeup = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
     float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-6.0 to 0.0 dB/oct, default -2.0)
     TargetProfile profile = TargetProfile::MODERN_MIX;
+    std::array<float, Bands::COUNT> customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     float baseThresholdDb = Bands::MBC_THRESHOLD_DB;
     MBCSpeed speed = MBCSpeed::NORMAL;
 };
@@ -121,6 +123,18 @@ public:
             }
         }
 
+        // Phase-compensation allpasses (see AP_COMPENSATION below)
+        for (size_t ch = 0; ch < 2; ++ch) {
+            for (size_t b = 0; b < Bands::COUNT; ++b) {
+                for (size_t k = 0; k < AP_MAX; ++k) {
+                    int xover = AP_COMPENSATION[b][k];
+                    if (xover >= 0) {
+                        m_ap[ch][b][k].setup(Bands::CROSSOVERS[static_cast<size_t>(xover)], sampleRate);
+                    }
+                }
+            }
+        }
+
         // Exact ballistics from Android GainProcessor.kt:
         // Band 0: attack 30ms, release 400ms (slower in bass as broadcast chains do)
         // Bands 1-5: attack 15ms, release 200ms
@@ -128,6 +142,10 @@ public:
         for (size_t b = 1; b < Bands::COUNT; ++b) {
             m_bands[b].setup(sampleRate, 15.0f, 200.0f);
         }
+        // setup() above reinstalls NORMAL ballistics, so forget the cached speed;
+        // otherwise updateSpeed() early-returns and a selected Slow/Fast silently
+        // reverts to Normal after any prepare() (e.g. a JACK sample-rate change).
+        m_currentSpeed = MBCSpeed::NORMAL;
 
         reset();
     }
@@ -138,10 +156,15 @@ public:
                 m_lp[ch][i].reset();
                 m_hp[ch][i].reset();
             }
+            for (size_t b = 0; b < Bands::COUNT; ++b) {
+                for (size_t k = 0; k < AP_MAX; ++k) m_ap[ch][b][k].reset();
+            }
         }
         for (size_t b = 0; b < Bands::COUNT; ++b) {
             m_bands[b].reset();
         }
+        m_autoMakeupGainDb = 0.0f;
+        m_smoothMakeupLin = 1.0f;
     }
 
     void updateSpeed(MBCSpeed speed) {
@@ -176,6 +199,8 @@ public:
             for (size_t b = 0; b < Bands::COUNT; ++b) {
                 m_bands[b].reset();
             }
+            m_autoMakeupGainDb = 0.0f;
+            m_smoothMakeupLin = 1.0f;
             return;
         }
 
@@ -183,33 +208,68 @@ public:
 
         // Calculate thresholds per band using exact Android Shaper formula
         std::array<float, Bands::COUNT> thresholds = Bands::thresholdsFor(
-            true, params.toneSlopeDbPerOctave, params.profile, params.baseThresholdDb
+            true, params.toneSlopeDbPerOctave, params.profile, params.customOffsetsDb, params.baseThresholdDb
         );
 
         // Compression ratio: 1.0 to 4.0 matching Android Shaper.kt
         float ratio = 1.0f + params.compressionAmount * (Bands::MAX_RATIO - 1.0f);
 
-        for (size_t s = 0; s < numSamples; ++s) {
-            float inL = left[s];
-            float inR = right[s];
+        // Process in sub-blocks of 32 samples for smooth, sub-millisecond adaptive makeup tracking
+        constexpr size_t SUB_BLOCK = 32;
+        size_t s = 0;
+        while (s < numSamples) {
+            size_t chunk = std::min(SUB_BLOCK, numSamples - s);
 
-            std::array<float, Bands::COUNT> bandL;
-            std::array<float, Bands::COUNT> bandR;
-
-            split6Bands(0, inL, bandL);
-            split6Bands(1, inR, bandR);
-
-            float outL = 0.0f;
-            float outR = 0.0f;
-
-            for (size_t b = 0; b < Bands::COUNT; ++b) {
-                m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio, params.compressionAmount);
-                outL += bandL[b];
-                outR += bandR[b];
+            float targetMakeupDb = 0.0f;
+            if (params.autoMakeup) {
+                constexpr std::array<float, Bands::COUNT> weights = { 0.10f, 0.20f, 0.25f, 0.25f, 0.15f, 0.05f };
+                float effGrDb = 0.0f;
+                for (size_t b = 0; b < Bands::COUNT; ++b) {
+                    effGrDb += weights[b] * m_bands[b].getGainReductionDb();
+                }
+                targetMakeupDb = std::clamp(-effGrDb, 0.0f, 12.0f);
             }
+            m_autoMakeupGainDb = targetMakeupDb;
 
-            left[s] = outL;
-            right[s] = outR;
+            float targetLin = std::pow(10.0f, targetMakeupDb / 20.0f);
+            float step = (targetLin - m_smoothMakeupLin) / static_cast<float>(chunk);
+
+            for (size_t i = 0; i < chunk; ++i, ++s) {
+                float inL = left[s];
+                float inR = right[s];
+
+                std::array<float, Bands::COUNT> bandL;
+                std::array<float, Bands::COUNT> bandR;
+
+                split6Bands(0, inL, bandL);
+                split6Bands(1, inR, bandR);
+
+                float outL = 0.0f;
+                float outR = 0.0f;
+
+                for (size_t b = 0; b < Bands::COUNT; ++b) {
+                    m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio, params.compressionAmount);
+                    outL += bandL[b];
+                    outR += bandR[b];
+                }
+
+                m_smoothMakeupLin += step;
+                left[s] = outL * m_smoothMakeupLin;
+                right[s] = outR * m_smoothMakeupLin;
+            }
+            m_smoothMakeupLin = targetLin;
+        }
+
+        // Final update of reported makeup gain at end of block
+        if (params.autoMakeup) {
+            constexpr std::array<float, Bands::COUNT> weights = { 0.10f, 0.20f, 0.25f, 0.25f, 0.15f, 0.05f };
+            float effGrDb = 0.0f;
+            for (size_t b = 0; b < Bands::COUNT; ++b) {
+                effGrDb += weights[b] * m_bands[b].getGainReductionDb();
+            }
+            m_autoMakeupGainDb = std::clamp(-effGrDb, 0.0f, 12.0f);
+        } else {
+            m_autoMakeupGainDb = 0.0f;
         }
     }
 
@@ -219,6 +279,10 @@ public:
             gr[b] = m_bands[b].getGainReductionDb();
         }
         return gr;
+    }
+
+    float getAutoMakeupGainDb() const noexcept {
+        return m_autoMakeupGainDb;
     }
 
 private:
@@ -245,15 +309,57 @@ private:
         // HighHigh branch: Split at Crossover 4 (8000 Hz)
         outBands[4] = static_cast<float>(m_lp[ch][4].process(high3500)); // Presence (3500 - 8000)
         outBands[5] = static_cast<float>(m_hp[ch][4].process(high3500)); // Air (> 8000)
+
+        // Phase-align the bands so they reconstruct flat when summed. Each band
+        // is passed through the allpasses of the splits its own path skipped;
+        // this leaves every band's magnitude response untouched (so the per-band
+        // thresholds keep their calibration) and only corrects the summation.
+        for (size_t b = 0; b < Bands::COUNT; ++b) {
+            double v = static_cast<double>(outBands[b]);
+            for (size_t k = 0; k < AP_MAX; ++k) {
+                if (AP_COMPENSATION[b][k] < 0) break;
+                v = m_ap[ch][b][k].process(v);
+            }
+            outBands[b] = static_cast<float>(v);
+        }
     }
+
+    /**
+     * Which crossovers each band must be allpass-corrected by, as indices into
+     * Bands::CROSSOVERS = {120, 400, 1200, 3500, 8000}; -1 terminates the list.
+     *
+     * The tree splits at 1200 first, then 400 and 120 down the low branch and
+     * 3500 and 8000 down the high branch. Writing L for the 1200 low branch and
+     * H for the high one, and using LP+HP = AP at each split:
+     *
+     *   bands 0+1 already sum to LP1200*LP400*AP120, so band 2 (LP1200*HP400)
+     *   needs AP120 to let the 400 split close:  L = LP1200*AP120*AP400
+     *   bands 4+5 already sum to HP1200*HP3500*AP8000, so band 3 needs AP8000:
+     *                                            H = HP1200*AP8000*AP3500
+     *   L and H now carry different allpasses, so the 1200 split cannot close.
+     *   Give L the high branch's pair and H the low branch's pair, and the whole
+     *   sum collapses to AP120*AP400*AP3500*AP8000*AP1200 - flat magnitude.
+     */
+    static constexpr size_t AP_MAX = 3;
+    static constexpr int AP_COMPENSATION[Bands::COUNT][AP_MAX] = {
+        { 3,  4, -1 },   // Sub       : cross-branch AP3500, AP8000
+        { 3,  4, -1 },   // Bass      : cross-branch AP3500, AP8000
+        { 0,  3,  4 },   // Low-Mid   : intra AP120 + cross-branch AP3500, AP8000
+        { 4,  0,  1 },   // High-Mid  : intra AP8000 + cross-branch AP120, AP400
+        { 0,  1, -1 },   // Presence  : cross-branch AP120, AP400
+        { 0,  1, -1 }    // Air       : cross-branch AP120, AP400
+    };
 
     double m_sampleRate = 48000.0;
 
     std::array<std::array<LR4Filter, 5>, 2> m_lp;
     std::array<std::array<LR4Filter, 5>, 2> m_hp;
+    std::array<std::array<std::array<AllpassLR4, AP_MAX>, Bands::COUNT>, 2> m_ap;
 
     std::array<BandCompressor, Bands::COUNT> m_bands;
     MBCSpeed m_currentSpeed = MBCSpeed::NORMAL;
+    float m_autoMakeupGainDb = 0.0f;
+    float m_smoothMakeupLin = 1.0f;
 };
 
 } // namespace autolevel::dsp

@@ -14,7 +14,7 @@ inline constexpr double PI = 3.14159265358979323846;
  */
 class Biquad {
 public:
-    enum class Type { LowPass, HighPass };
+    enum class Type { LowPass, HighPass, Allpass };
 
     Biquad() = default;
 
@@ -30,10 +30,16 @@ public:
             m_b[0] = ((1.0 - cs) / 2.0) / a0;
             m_b[1] = (1.0 - cs) / a0;
             m_b[2] = ((1.0 - cs) / 2.0) / a0;
-        } else {
+        } else if (type == Type::HighPass) {
             m_b[0] = ((1.0 + cs) / 2.0) / a0;
             m_b[1] = -(1.0 + cs) / a0;
             m_b[2] = ((1.0 + cs) / 2.0) / a0;
+        } else { // Allpass
+            // Same pole pair as the Butterworth sections above, so this is exactly
+            // the response an LR4 low/high pair sums to (see AllpassLR4 below).
+            m_b[0] = (1.0 - alpha) / a0;
+            m_b[1] = (-2.0 * cs) / a0;
+            m_b[2] = 1.0;
         }
 
         m_a[1] = (-2.0 * cs) / a0;
@@ -59,6 +65,29 @@ private:
     std::array<double, 3> m_a{1.0, 0.0, 0.0};
     double m_z1 = 0.0;
     double m_z2 = 0.0;
+};
+
+/**
+ * The allpass an LR4 low/high pair sums to.
+ *
+ * With LP = B^2 and HP = (1-B)^2 built from the same 2nd-order Butterworth
+ * section, LP + HP is not unity - it is a 2nd-order allpass at the same cutoff:
+ *
+ *     1/(s^2+r2*s+1)^2 + s^4/(s^2+r2*s+1)^2
+ *       = (1 + s^4)/(s^2+r2*s+1)^2
+ *       = (s^2-r2*s+1)/(s^2+r2*s+1)        [since 1+s^4 factors into the two]
+ *
+ * A tree of LR4 splits therefore only reconstructs flat if every band is
+ * corrected by the allpasses of the splits its own path did not pass through.
+ */
+class AllpassLR4 {
+public:
+    AllpassLR4() = default;
+    void setup(double cutoffHz, double sampleRate) { m_biquad.setup(Biquad::Type::Allpass, cutoffHz, sampleRate); }
+    void reset() { m_biquad.reset(); }
+    inline double process(double in) noexcept { return m_biquad.process(in); }
+private:
+    Biquad m_biquad;
 };
 
 /**

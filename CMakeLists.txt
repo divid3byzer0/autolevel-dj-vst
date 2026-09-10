@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(AutoLevelDJ VERSION 1.0.0 LANGUAGES C CXX)
+project(AutoLevelDJ VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -71,6 +71,7 @@ target_compile_definitions(AutoLevelDJ PRIVATE
 # Offline DSP unit test executable
 add_executable(dsp_test tests/dsp_test.cpp)
 target_include_directories(dsp_test PRIVATE src)
+target_compile_options(dsp_test PRIVATE -UNDEBUG)
 
 # Convenience target to install VST3 and AU into user's audio plugin folder
 if (APPLE)

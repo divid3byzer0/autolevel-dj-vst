@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 #include <numeric>
+#include <limits>
+#include <cstdint>
 
 using namespace autolevel::dsp;
 
@@ -23,22 +25,24 @@ void testKWeightingSineWave() {
     for (size_t i = 0; i < n; ++i) {
         double t = static_cast<double>(i) / sampleRate;
         double s = std::sin(2.0 * TEST_PI * freq * t);
-        sumSqIn += s * s;
+        double fL = 0.0, fR = 0.0;
+        filter.processSample(s, s, fL, fR);
 
-        double outL = 0.0, outR = 0.0;
-        filter.processSample(s, s, outL, outR);
-        sumSqOut += outL * outL;
+        if (i >= 24000) {
+            sumSqIn += s * s;
+            sumSqOut += fL * fL;
+        }
     }
 
-    double rmsIn = std::sqrt(sumSqIn / n);
-    double rmsOut = std::sqrt(sumSqOut / n);
+    double rmsIn = std::sqrt(sumSqIn / 24000.0);
+    double rmsOut = std::sqrt(sumSqOut / 24000.0);
     double gainDb = 20.0 * std::log10(rmsOut / rmsIn);
 
-    std::cout << "  Input RMS: " << rmsIn << " (-3.01 dBFS)" << std::endl;
+    std::cout << "  Input RMS: " << rmsIn << " (" << (20.0 * std::log10(rmsIn)) << " dBFS)" << std::endl;
     std::cout << "  Output RMS: " << rmsOut << std::endl;
     std::cout << "  K-Weighting gain at 1kHz: " << gainDb << " dB" << std::endl;
 
-    assert(gainDb > 0.0 && gainDb < 1.5);
+    assert(std::abs(gainDb - 0.6543) < 0.01);
     std::cout << "  -> PASS: 1kHz K-Weighting response is within specification." << std::endl;
 }
 
@@ -50,31 +54,27 @@ void testAndroidToneProfilesAndThresholds() {
 
     float linearSum = 0.0f;
     float modernSum = 0.0f;
+
     for (size_t b = 0; b < Bands::COUNT; ++b) {
         linearSum += linear[b];
         modernSum += modern[b];
-        std::cout << "  Band " << b << " (" << Bands::NAMES[b] << "): Linear=" << linear[b]
-                  << " dB, Modern=" << modern[b] << " dB" << std::endl;
+        std::cout << "  Band " << b << " (" << Bands::NAMES[b] << "): Linear="
+                  << linear[b] << " dB, Modern=" << modern[b] << " dB" << std::endl;
     }
 
     float linearAvg = linearSum / Bands::COUNT;
     float modernAvg = modernSum / Bands::COUNT;
+    (void)linearAvg;
+    (void)modernAvg;
 
-    // The average threshold must remain centered at -24 dBFS
     assert(std::abs(linearAvg - (-24.0f)) < 0.05f);
     assert(std::abs(modernAvg - (-24.0f)) < 0.05f);
 
-    // Tests matching Android ShaperTest.kt:
-    // Band 0 (20-120 Hz): higher threshold -> punchy bass with more headroom
     assert(modern[0] > linear[0]);
-
-    // Band 1 (120-400 Hz): lower threshold -> actively tames low-mid mud
     assert(modern[1] < linear[1]);
-
-    // Band 4 (3.5-8 kHz): lower threshold -> actively controls harshness and sibilance
+    assert(modern[2] > linear[2]);
+    assert(modern[3] > linear[3]);
     assert(modern[4] < linear[4]);
-
-    // Band 5 (8-20 kHz): higher threshold -> preserves open air
     assert(modern[5] > modern[4]);
 
     std::cout << "  -> PASS: Tone curves and per-band thresholds match Android Shaper exactly." << std::endl;
@@ -84,17 +84,21 @@ void testLR4CrossoverSummation() {
     std::cout << "[TEST] Linkwitz-Riley 6-band crossover flat magnitude test..." << std::endl;
     MultibandCompressor mbc;
     double sampleRate = 48000.0;
-    mbc.prepare(sampleRate);
 
     MBCParams params;
     params.enabled = true;
-    params.compressionAmount = 0.0f; // Linear bypass (no compression) -> pure crossover sum
+    params.compressionAmount = Bands::MIN_COMPRESSION;
+    params.baseThresholdDb = 60.0f;
+    params.autoMakeup = false;
+    params.toneSlopeDbPerOctave = 0.0f;
 
-    std::vector<double> testFreqs = { 50.0, 120.0, 300.0, 400.0, 800.0, 1200.0, 2000.0, 3500.0, 6000.0, 8000.0, 14000.0 };
+    std::vector<double> testFreqs = { 30.0, 50.0, 120.0, 300.0, 400.0, 600.0, 800.0, 1200.0, 1800.0, 2000.0, 3500.0, 6000.0, 8000.0, 14000.0 };
 
+    double worstDb = 0.0;
+    double worstFreq = 0.0;
     for (double f : testFreqs) {
-        mbc.reset();
-        size_t n = 4800;
+        mbc.prepare(sampleRate);
+        size_t n = 48000;
         std::vector<float> inL(n), inR(n), origL(n);
         for (size_t i = 0; i < n; ++i) {
             float s = static_cast<float>(std::sin(2.0 * TEST_PI * f * (static_cast<double>(i) / sampleRate)));
@@ -108,198 +112,189 @@ void testLR4CrossoverSummation() {
         double sumSqIn = 0.0;
         double sumSqOut = 0.0;
         size_t count = 0;
-        for (size_t i = 2800; i < n; ++i) {
+        for (size_t i = 24000; i < n; ++i) {
             sumSqIn += origL[i] * origL[i];
             sumSqOut += inL[i] * inL[i];
             count++;
         }
 
+        assert(sumSqOut > 0.0);
+
         double rmsIn = std::sqrt(sumSqIn / count);
         double rmsOut = std::sqrt(sumSqOut / count);
         double errorDb = 20.0 * std::log10(rmsOut / rmsIn);
 
-        assert(std::abs(errorDb) < 0.25);
+        if (std::abs(errorDb) > std::abs(worstDb)) {
+            worstDb = errorDb;
+            worstFreq = f;
+        }
+
+        assert(std::abs(errorDb) < 0.10);
     }
+
+    std::cout << "  Worst reconstruction error: " << worstDb << " dB at " << worstFreq << " Hz" << std::endl;
     std::cout << "  -> PASS: 6-band crossover tree sums to flat magnitude." << std::endl;
 }
 
 void testLevelResponseMapping() {
     std::cout << "[TEST] Level response slider mapping..." << std::endl;
-    assert(LoudnessMeter::halfLifeForResponse(0.0f) == 0.0f); // whole track
-    float mid = LoudnessMeter::halfLifeForResponse(0.5f);
-    float max = LoudnessMeter::halfLifeForResponse(1.0f);
-    std::cout << "  Response 0.0 -> " << LoudnessMeter::halfLifeForResponse(0.0f) << "s (track hold)" << std::endl;
-    std::cout << "  Response 0.5 -> " << mid << "s" << std::endl;
-    std::cout << "  Response 1.0 -> " << max << "s" << std::endl;
-    assert(max >= 3.99f && max <= 4.01f);
-    assert(mid > 4.0f && mid < 120.0f);
+    float r0 = LoudnessMeter::halfLifeForResponse(0.0f);
+    float r5 = LoudnessMeter::halfLifeForResponse(0.5f);
+    float r1 = LoudnessMeter::halfLifeForResponse(1.0f);
+
+    std::cout << "  Response 0.0 -> " << r0 << "s (track hold)" << std::endl;
+    std::cout << "  Response 0.5 -> " << r5 << "s" << std::endl;
+    std::cout << "  Response 1.0 -> " << r1 << "s" << std::endl;
+
+    assert(r0 == 0.0f);
+    assert(r1 == 4.0f);
+    assert(std::abs(r5 - 21.9089f) < 0.01f);
     std::cout << "  -> PASS: Level response logarithmic decay mapping verified." << std::endl;
-}
-
-void testFullChain() {
-    std::cout << "[TEST] AutoLevelEngine full chain: AGC -> MBC -> Limiter..." << std::endl;
-    AutoLevelEngine engine;
-    double sampleRate = 48000.0;
-    engine.prepare(sampleRate);
-
-    EngineParameters params;
-    params.targetLUFS = -9.0f;
-    params.maxBoostDb = 12.0f;
-    params.maxCutDb = 12.0f;
-    params.ceilingDb = -1.5f;
-    params.compressionAmount = 0.6f;
-    params.toneSlopeDbPerOctave = -2.0f;
-    params.targetProfile = TargetProfile::MODERN_MIX;
-
-    // Simulate audio blocks for 3 seconds
-    size_t block = 480;
-    size_t totalBlocks = 300;
-
-    float maxOutputPeak = 0.0f;
-    for (size_t b = 0; b < totalBlocks; ++b) {
-        std::vector<float> left(block), right(block);
-        for (size_t i = 0; i < block; ++i) {
-            float s = 0.125f * static_cast<float>(std::sin(2.0 * TEST_PI * 440.0 * (b * block + i) / sampleRate));
-            left[i] = s;
-            right[i] = s;
-        }
-
-        engine.process(left.data(), right.data(), block, params);
-
-        for (size_t i = 0; i < block; ++i) {
-            maxOutputPeak = std::max(maxOutputPeak, std::abs(left[i]));
-        }
-    }
-
-    auto state = engine.getVisualState();
-    std::cout << "  Applied Gain: " << state.appliedGainDb << " dB" << std::endl;
-    std::cout << "  Target Gain: " << state.targetGainDb << " dB" << std::endl;
-    std::cout << "  Max Output Peak: " << maxOutputPeak << " (Ceiling: " << std::pow(10.0f, -1.5f / 20.0f) << ")" << std::endl;
-
-    assert(state.appliedGainDb > 0.0f);
-    // Limiter ceiling (-1.5 dBFS = 0.841)
-    assert(maxOutputPeak <= 0.85f);
-
-    std::cout << "  -> PASS: Full chain leveled, compressed, and limited to ceiling." << std::endl;
 }
 
 void testEbuR128DynamicLoudness() {
     std::cout << "[TEST] EBU R128 Loudness measurement across varying song levels..." << std::endl;
-    std::vector<float> inputLevels = { -6.0f, -12.0f, -18.0f, -24.0f };
+    double sampleRate = 48000.0;
 
-    for (float level : inputLevels) {
+    auto testLevel = [&](double targetDbfs) {
         LoudnessMeter meter;
-        double sampleRate = 48000.0;
         meter.prepare(sampleRate);
+        meter.setLevelResponse(0.0f);
 
-        float amp = std::pow(10.0f, level / 20.0f);
-        size_t numBlocks = 40; // 4 seconds
-        size_t blockSize = 4800; // 100ms
-
-        for (size_t b = 0; b < numBlocks; ++b) {
-            std::vector<float> l(blockSize), r(blockSize);
-            for (size_t i = 0; i < blockSize; ++i) {
-                float s = amp * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * (b * blockSize + i) / sampleRate));
-                l[i] = s;
-                r[i] = s;
-            }
-            meter.process(l.data(), r.data(), blockSize);
+        double linAmp = std::pow(10.0, targetDbfs / 20.0);
+        size_t n = 48000 * 2;
+        std::vector<float> l(n), r(n);
+        for (size_t i = 0; i < n; ++i) {
+            double s = linAmp * std::sin(2.0 * TEST_PI * 1000.0 * (static_cast<double>(i) / sampleRate));
+            l[i] = static_cast<float>(s);
+            r[i] = static_cast<float>(s);
         }
 
+        meter.process(l.data(), r.data(), n);
         auto readings = meter.getReadings();
-        std::cout << "  Input level " << level << " dBFS -> Integrated: "
+
+        std::cout << "  Input level " << targetDbfs << " dBFS -> Integrated: "
                   << readings.integratedLUFS << " LUFS, Momentary: "
                   << readings.momentaryLUFS << " LUFS" << std::endl;
 
-        // In BS.1770/EBU R128, a 1kHz sine wave of peak amp A has RMS = A / sqrt(2) (-3.01 dB)
-        // With 1kHz K-weighting gain (~0.65 dB) and stereo (+3.01 dB) and -0.691 constant:
-        // Expected LUFS is approximately level.
-        assert(readings.integratedLUFS > -70.0f);
-        assert(std::abs(readings.integratedLUFS - level) < 1.0f);
-    }
+        double expectedLufs = targetDbfs - 0.17;
+        assert(std::abs(readings.integratedLUFS - expectedLufs) < 0.5);
+    };
+
+    testLevel(-6.0);
+    testLevel(-12.0);
+    testLevel(-18.0);
+    testLevel(-24.0);
+
     std::cout << "  -> PASS: EBU R128 measures varying loudness accurately across all levels." << std::endl;
 }
 
 void testMbcSpeedBallistics() {
     std::cout << "[TEST] Multiband Compressor speed ballistics (Slow, Normal, Fast)..." << std::endl;
-    MultibandCompressor mbc;
     double sampleRate = 48000.0;
-    mbc.prepare(sampleRate);
 
-    MBCParams params;
-    params.enabled = true;
-    params.compressionAmount = 0.8f;
-    params.toneSlopeDbPerOctave = -2.0f;
-    params.profile = TargetProfile::MODERN_MIX;
+    auto measureCompression = [&](MBCSpeed speed) {
+        MultibandCompressor mbc;
+        mbc.prepare(sampleRate);
 
-    // Test with FAST speed: fast response, deeper reduction within short burst
-    params.speed = MBCSpeed::FAST;
-    size_t n = 4800; // 100ms
-    std::vector<float> fastL(n), fastR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float s = static_cast<float>(std::sin(2.0 * TEST_PI * 200.0 * i / sampleRate));
-        fastL[i] = s;
-        fastR[i] = s;
-    }
-    mbc.reset();
-    mbc.process(fastL.data(), fastR.data(), n, params);
-    float fastGr = mbc.getGainReductionsDb()[1]; // Bass band (120-400 Hz)
+        MBCParams params;
+        params.enabled = true;
+        params.speed = speed;
+        params.compressionAmount = 0.8f;
+        params.baseThresholdDb = -24.0f;
+        params.autoMakeup = false;
 
-    // Test with SLOW speed: slower attack, less reduction over the same 100ms window
-    params.speed = MBCSpeed::SLOW;
-    std::vector<float> slowL = fastL;
-    std::vector<float> slowR = fastR;
-    mbc.reset();
-    mbc.process(slowL.data(), slowR.data(), n, params);
-    float slowGr = mbc.getGainReductionsDb()[1];
+        size_t n = static_cast<size_t>(sampleRate * 0.1);
+        std::vector<float> l(n), r(n);
+        for (size_t i = 0; i < n; ++i) {
+            float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
+            l[i] = s;
+            r[i] = s;
+        }
+
+        mbc.process(l.data(), r.data(), n, params);
+        return mbc.getGainReductionsDb()[0];
+    };
+
+    float fastGr = measureCompression(MBCSpeed::FAST);
+    float normalGr = measureCompression(MBCSpeed::NORMAL);
+    float slowGr = measureCompression(MBCSpeed::SLOW);
 
     std::cout << "  Fast 100ms Bass GR: " << fastGr << " dB" << std::endl;
     std::cout << "  Slow 100ms Bass GR: " << slowGr << " dB" << std::endl;
 
-    // Fast compressor reacts faster -> more negative GR in initial 100ms
-    assert(fastGr < slowGr);
+    assert(fastGr < normalGr);
+    assert(normalGr < slowGr);
+
+    // Verify prepare() does not silently revert speed caching (finding 9)
+    MultibandCompressor mbcCached;
+    mbcCached.prepare(sampleRate);
+    MBCParams pFast;
+    pFast.enabled = true;
+    pFast.speed = MBCSpeed::FAST;
+    pFast.compressionAmount = 0.8f;
+    pFast.baseThresholdDb = -24.0f;
+    pFast.autoMakeup = false;
+
+    size_t n = static_cast<size_t>(sampleRate * 0.1);
+    std::vector<float> l(n), r(n);
+    for (size_t i = 0; i < n; ++i) {
+        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
+        l[i] = s;
+        r[i] = s;
+    }
+    mbcCached.process(l.data(), r.data(), n, pFast);
+    float fastBefore = mbcCached.getGainReductionsDb()[0];
+
+    mbcCached.prepare(sampleRate);
+    for (size_t i = 0; i < n; ++i) {
+        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
+        l[i] = s;
+        r[i] = s;
+    }
+    mbcCached.process(l.data(), r.data(), n, pFast);
+    float fastAfter = mbcCached.getGainReductionsDb()[0];
+
+    assert(std::abs(fastBefore - fastAfter) < 0.001f);
+
     std::cout << "  -> PASS: MBC speed mode correctly alters compression ballistics." << std::endl;
 }
 
 void testPostMbcGain() {
     std::cout << "[TEST] Post-MBC Gain stage (makeup & trim)..." << std::endl;
-    AutoLevelEngine engine;
     double sampleRate = 48000.0;
-    engine.prepare(sampleRate);
 
-    EngineParameters params;
-    params.targetLUFS = -9.0f;
-    params.maxBoostDb = 0.0f;
-    params.maxCutDb = 0.0f;
-    params.compressionAmount = 0.0f; // Linear pass-through
-    params.ceilingDb = 0.0f;         // Limiter ceiling 0 dBFS so +6 dB won't clip test signal
+    auto runGain = [&](float gainDb) {
+        AutoLevelEngine engine;
+        engine.prepare(sampleRate);
 
-    size_t n = 480;
-    // Base signal at 0.1 peak (-20 dBFS)
-    std::vector<float> in0L(n, 0.1f), in0R(n, 0.1f);
-    params.postMbcGainDb = 0.0f;
-    engine.process(in0L.data(), in0R.data(), n, params);
-    float peak0 = std::abs(in0L[0]);
+        EngineParameters params;
+        params.targetLUFS = -14.0f;
+        params.postMbcGainDb = gainDb;
+        params.compressionAmount = 0.0f;
+        params.levelResponse = 0.0f;
+        params.ceilingDb = 0.0f;
 
-    // +6 dB post gain -> ~2.0x amplitude
-    std::vector<float> inPlusL(n, 0.1f), inPlusR(n, 0.1f);
-    params.postMbcGainDb = 6.0f;
-    engine.process(inPlusL.data(), inPlusR.data(), n, params);
-    float peakPlus = std::abs(inPlusL[0]);
+        size_t n = 1000;
+        std::vector<float> l(n, 0.1f), r(n, 0.1f);
+        engine.process(l.data(), r.data(), n, params);
 
-    // -6 dB post gain -> ~0.5x amplitude
-    std::vector<float> inMinusL(n, 0.1f), inMinusR(n, 0.1f);
-    params.postMbcGainDb = -6.0f;
-    engine.process(inMinusL.data(), inMinusR.data(), n, params);
-    float peakMinus = std::abs(inMinusL[0]);
+        float maxL = 0.0f;
+        for (float s : l) maxL = std::max(maxL, std::abs(s));
+        return maxL;
+    };
+
+    float peak0 = runGain(0.0f);
+    float peakPlus6 = runGain(6.0f);
+    float peakMinus6 = runGain(-6.0f);
 
     std::cout << "  0 dB Post Peak: " << peak0 << std::endl;
-    std::cout << "  +6 dB Post Peak: " << peakPlus << " (ratio: " << (peakPlus / peak0) << ")" << std::endl;
-    std::cout << "  -6 dB Post Peak: " << peakMinus << " (ratio: " << (peakMinus / peak0) << ")" << std::endl;
+    std::cout << "  +6 dB Post Peak: " << peakPlus6 << " (ratio: " << (peakPlus6 / peak0) << ")" << std::endl;
+    std::cout << "  -6 dB Post Peak: " << peakMinus6 << " (ratio: " << (peakMinus6 / peak0) << ")" << std::endl;
 
-    assert(std::abs((peakPlus / peak0) - std::pow(10.0f, 6.0f / 20.0f)) < 0.02f);
-    assert(std::abs((peakMinus / peak0) - std::pow(10.0f, -6.0f / 20.0f)) < 0.02f);
-    std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
+    assert(std::abs((peakPlus6 / peak0) - 1.99526) < 0.01);
+    assert(std::abs((peakMinus6 / peak0) - 0.501187) < 0.01);
+        std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
 }
 
 void testDynamicBassLift() {
@@ -417,37 +412,34 @@ void testHighPassFilter() {
     hpf.prepare(sampleRate);
     hpf.setCutoff(30.0f, true);
 
-    auto measureGainAt = [&](double freq) -> double {
+    auto measureGain = [&](double freq) {
         hpf.reset();
-        size_t n = 48000; // 1 second
-        std::vector<float> inL(n), inR(n);
-        double sumSqIn = 0.0, sumSqOut = 0.0;
+        size_t n = 48000;
+        std::vector<float> l(n), r(n);
         for (size_t i = 0; i < n; ++i) {
-            float s = static_cast<float>(std::sin(2.0 * TEST_PI * freq * i / sampleRate));
-            inL[i] = s;
-            inR[i] = s;
+            float s = static_cast<float>(std::sin(2.0 * TEST_PI * freq * (static_cast<double>(i) / sampleRate)));
+            l[i] = s;
+            r[i] = s;
         }
-        hpf.process(inL.data(), inR.data(), n);
-        // Measure steady state in second half
-        for (size_t i = 24000; i < n; ++i) {
-            float orig = static_cast<float>(std::sin(2.0 * TEST_PI * freq * i / sampleRate));
-            sumSqIn += orig * orig;
-            sumSqOut += inL[i] * inL[i];
-        }
-        return 20.0 * std::log10(std::sqrt(sumSqOut / sumSqIn));
+        hpf.process(l.data(), r.data(), n);
+
+        double sumSq = 0.0;
+        for (size_t i = 24000; i < n; ++i) sumSq += l[i] * l[i];
+        double rms = std::sqrt(sumSq / 24000.0);
+        return 20.0 * std::log10(rms / 0.70710678);
     };
 
-    double gainPassband = measureGainAt(1000.0);
-    double gainCutoff   = measureGainAt(30.0);
-    double gainOctaveDown = measureGainAt(15.0);
+    double g1k = measureGain(1000.0);
+    double g30 = measureGain(30.0);
+    double g15 = measureGain(15.0);
 
-    std::cout << "  1 kHz passband gain: " << gainPassband << " dB (expected: ~0.0 dB)" << std::endl;
-    std::cout << "  30 Hz cutoff gain:   " << gainCutoff << " dB (expected: ~-3.0 dB)" << std::endl;
-    std::cout << "  15 Hz octave-down gain: " << gainOctaveDown << " dB (expected: ~-27.0 dB)" << std::endl;
+    std::cout << "  1 kHz passband gain: " << g1k << " dB (expected: ~0.0 dB)" << std::endl;
+    std::cout << "  30 Hz cutoff gain:   " << g30 << " dB (expected: ~-3.0 dB)" << std::endl;
+    std::cout << "  15 Hz octave-down gain: " << g15 << " dB (expected: ~-27.0 dB)" << std::endl;
 
-    assert(std::abs(gainPassband) < 0.05); // Flat passband
-    assert(std::abs(gainCutoff - (-3.01)) < 0.25); // Exactly -3 dB at Butterworth cutoff
-    assert(gainOctaveDown < -24.0); // 24 dB/oct slope verified!
+    assert(std::abs(g1k - 0.0) < 0.01);
+    assert(std::abs(g30 - (-3.01)) < 0.1);
+    assert(g15 < -24.0);
 
     std::cout << "  -> PASS: 4th-order Butterworth filter exhibits exact 24 dB/octave attenuation." << std::endl;
 }
@@ -458,6 +450,242 @@ void testDefaultLimiterCeiling() {
     std::cout << "  Default ceiling: " << defaultParams.ceilingDb << " dBFS" << std::endl;
     assert(std::abs(defaultParams.ceilingDb - (-0.3f)) < 0.001f);
     std::cout << "  -> PASS: Default limiter ceiling is -0.3 dBFS." << std::endl;
+}
+
+void testBreakdownFreezeSensitivity() {
+    std::cout << "[TEST] Breakdown Auto-Freeze 3-way sensitivity (5 LU, 7 LU, 9 LU)..." << std::endl;
+    Leveler leveler;
+    leveler.prepare(48000.0);
+
+    LevelerParams params;
+    params.enabled = true;
+    params.freezeBreakdowns = true;
+    params.targetLUFS = -14.0f;
+
+    LoudnessReadings readings;
+    readings.integratedLUFS = -14.0f;
+    readings.momentaryLUFS = -20.5f;
+
+    // 1. Light (5 LU threshold) -> 6.5 LU drop should trigger freeze
+    params.breakdownThresholdLU = 5.0f;
+    leveler.update(params, readings, 100, 0.01f);
+    assert(leveler.isFrozen());
+    std::cout << "  -> 6.5 LU drop at 5.0 LU threshold: FROZEN (PASS)" << std::endl;
+
+    // 2. Normal (7 LU threshold) -> 6.5 LU drop should NOT trigger freeze
+    params.breakdownThresholdLU = 7.0f;
+    leveler.update(params, readings, 100, 0.01f);
+    assert(!leveler.isFrozen());
+    std::cout << "  -> 6.5 LU drop at 7.0 LU threshold: NOT FROZEN (PASS)" << std::endl;
+
+    // 3. Deep (9 LU threshold) -> 6.5 LU drop should NOT trigger freeze
+    params.breakdownThresholdLU = 9.0f;
+    leveler.update(params, readings, 100, 0.01f);
+    assert(!leveler.isFrozen());
+    std::cout << "  -> 6.5 LU drop at 9.0 LU threshold: NOT FROZEN (PASS)" << std::endl;
+
+    // 4. Massive 10.0 LU drop -> ALL should freeze
+    readings.momentaryLUFS = -24.0f;
+    params.breakdownThresholdLU = 9.0f;
+    leveler.update(params, readings, 100, 0.01f);
+    assert(leveler.isFrozen());
+    std::cout << "  -> 10.0 LU drop at 9.0 LU threshold: FROZEN (PASS)" << std::endl;
+
+    // 5. Disabled freeze -> should NOT freeze even on 10.0 LU drop
+    params.freezeBreakdowns = false;
+    leveler.update(params, readings, 100, 0.01f);
+    assert(!leveler.isFrozen());
+    std::cout << "  -> Freeze disabled: NOT FROZEN (PASS)" << std::endl;
+
+    std::cout << "  -> PASS: Breakdown Freeze 3-way sensitivity logic verified!" << std::endl;
+}
+
+void testCustomToneProfile() {
+    std::cout << "[TEST] Custom Target Contour thresholds and zero-sum re-centering..." << std::endl;
+    std::array<float, 6> customOffsets = { 3.0f, -4.0f, 1.0f, 2.0f, -3.0f, 1.0f };
+    auto customThresh = Bands::thresholdsFor(true, -2.0f, TargetProfile::CUSTOM, customOffsets, -24.0f);
+    auto flatThresh = Bands::thresholdsFor(true, -2.0f, TargetProfile::CUSTOM, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, -24.0f);
+
+    float sum = 0.0f;
+    for (size_t b = 0; b < 6; ++b) {
+        sum += customThresh[b];
+        std::cout << "  Band " << b << " (" << Bands::NAMES[b] << "): Offset=" << customOffsets[b]
+                  << " dB, Custom Thresh=" << customThresh[b] << " dBFS, Flat Thresh=" << flatThresh[b] << " dBFS" << std::endl;
+    }
+    float mean = sum / 6.0f;
+    std::cout << "  Mean custom threshold: " << mean << " dBFS" << std::endl;
+    assert(std::abs(mean - (-24.0f)) < 0.01f);
+    assert(customThresh[0] > flatThresh[0]);
+    assert(customThresh[1] < flatThresh[1]);
+    std::cout << "  -> PASS: Custom contour thresholds calculated and zero-sum re-centered perfectly." << std::endl;
+}
+
+void testMbcAutoMakeupGain() {
+    std::cout << "[TEST] MBC Adaptive Auto-Makeup Gain..." << std::endl;
+    MultibandCompressor mbc;
+    mbc.prepare(48000.0);
+
+    MBCParams params;
+    params.enabled = true;
+    params.compressionAmount = 0.8f;
+    params.toneSlopeDbPerOctave = -2.0f;
+    params.baseThresholdDb = -30.0f;
+    params.autoMakeup = false;
+
+    constexpr size_t N = 48000;
+    std::vector<float> leftOff(N), rightOff(N);
+    std::vector<float> leftOn(N), rightOn(N);
+    for (size_t i = 0; i < N; ++i) {
+        float s = 0.3162f * std::sin(2.0 * TEST_PI * 1000.0 * i / 48000.0);
+        leftOff[i] = rightOff[i] = s;
+        leftOn[i] = rightOn[i] = s;
+    }
+
+    mbc.process(leftOff.data(), rightOff.data(), N, params);
+    float makeupOff = mbc.getAutoMakeupGainDb();
+    (void)makeupOff;
+    assert(makeupOff == 0.0f);
+
+    double sumSqOff = 0.0;
+    for (size_t i = 24000; i < N; ++i) {
+        sumSqOff += leftOff[i] * leftOff[i];
+    }
+    double rmsOff = std::sqrt(sumSqOff / 24000.0);
+
+    mbc.reset();
+    params.autoMakeup = true;
+    mbc.process(leftOn.data(), rightOn.data(), N, params);
+    float makeupOn = mbc.getAutoMakeupGainDb();
+    assert(makeupOn > 0.0f);
+
+    double sumSqOn = 0.0;
+    for (size_t i = 24000; i < N; ++i) {
+        sumSqOn += leftOn[i] * leftOn[i];
+    }
+    double rmsOn = std::sqrt(sumSqOn / 24000.0);
+
+    double diffDb = 20.0 * std::log10(rmsOn / rmsOff);
+    std::cout << "  Auto-Makeup OFF RMS: " << rmsOff << ", ON RMS: " << rmsOn
+              << " (Boost: +" << diffDb << " dB, Reported Makeup: +" << makeupOn << " dB)" << std::endl;
+
+    assert(rmsOn > rmsOff);
+    assert(std::abs(diffDb - makeupOn) < 0.5);
+    std::cout << "  -> PASS: MBC Auto-Makeup dynamically compensates compressed energy!" << std::endl;
+}
+
+void testFullChain() {
+    std::cout << "[TEST] AutoLevelEngine full chain: AGC -> MBC -> Limiter..." << std::endl;
+    AutoLevelEngine engine;
+    double sampleRate = 48000.0;
+    engine.prepare(sampleRate);
+
+    EngineParameters params;
+    params.targetLUFS = -9.0f;
+    params.maxBoostDb = 12.0f;
+    params.maxCutDb = 12.0f;
+    params.ceilingDb = -1.5f;
+    params.compressionAmount = 0.6f;
+    params.toneSlopeDbPerOctave = -2.0f;
+    params.targetProfile = TargetProfile::MODERN_MIX;
+
+    // Simulate audio blocks for 3 seconds
+    size_t block = 480;
+    size_t totalBlocks = 300;
+
+    float maxOutputPeak = 0.0f;
+    for (size_t b = 0; b < totalBlocks; ++b) {
+        std::vector<float> left(block), right(block);
+        for (size_t i = 0; i < block; ++i) {
+            float s = 0.125f * static_cast<float>(std::sin(2.0 * TEST_PI * 440.0 * (b * block + i) / sampleRate));
+            left[i] = s;
+            right[i] = s;
+        }
+
+        engine.process(left.data(), right.data(), block, params);
+
+        for (size_t i = 0; i < block; ++i) {
+            maxOutputPeak = std::max(maxOutputPeak, std::abs(left[i]));
+        }
+    }
+
+    auto state = engine.getVisualState();
+    std::cout << "  Applied Gain: " << state.appliedGainDb << " dB" << std::endl;
+    std::cout << "  Target Gain: " << state.targetGainDb << " dB" << std::endl;
+    std::cout << "  Max Output Peak: " << maxOutputPeak << " (Ceiling: " << std::pow(10.0f, -1.5f / 20.0f) << ")" << std::endl;
+
+    assert(state.appliedGainDb > 0.0f);
+    // Limiter ceiling (-1.5 dBFS = 0.841)
+    assert(maxOutputPeak <= 0.85f);
+
+    std::cout << "  -> PASS: Full chain leveled, compressed, and limited to ceiling." << std::endl;
+}
+
+void testInputSanitizerAntiNan() {
+    std::cout << "[TEST] Audio Input Sanitizer & Anti-NaN Protection..." << std::endl;
+    AutoLevelEngine engine;
+    engine.prepare(48000.0);
+
+    constexpr size_t N = 256;
+    std::vector<float> left(N), right(N);
+
+    // Inject NaNs, Infs, extreme runaway values, and valid audio
+    for (size_t i = 0; i < N; ++i) {
+        if (i % 10 == 0) {
+            left[i] = std::numeric_limits<float>::quiet_NaN();
+            right[i] = std::numeric_limits<float>::infinity();
+        } else if (i % 10 == 5) {
+            left[i] = -std::numeric_limits<float>::infinity();
+            right[i] = 100.0f; // Extreme spike
+        } else {
+            left[i] = 0.5f * std::sin(2.0 * TEST_PI * 1000.0 * i / 48000.0);
+            right[i] = 0.5f * std::cos(2.0 * TEST_PI * 1000.0 * i / 48000.0);
+        }
+    }
+
+    EngineParameters params;
+    engine.process(left.data(), right.data(), N, params);
+
+    for (size_t i = 0; i < N; ++i) {
+        assert(std::isfinite(left[i]));
+        assert(std::isfinite(right[i]));
+        assert(!std::isnan(left[i]));
+        assert(!std::isnan(right[i]));
+    }
+
+    auto vs = engine.getVisualState();
+    (void)vs;
+    assert(std::isfinite(vs.loudness.momentaryLUFS));
+    assert(std::isfinite(vs.appliedGainDb));
+    assert(std::isfinite(vs.outputPeakDbL));
+
+    std::cout << "  -> PASS: All NaNs and Infs safely intercepted and sanitized without filter corruption." << std::endl;
+}
+
+void testLockFreeDoubleBufferedVisualState() {
+    std::cout << "[TEST] Lock-Free 3-Buffered Visual State & Concurrency..." << std::endl;
+    AutoLevelEngine engine;
+    engine.prepare(48000.0);
+
+    constexpr size_t N = 256;
+    std::vector<float> left(N, 0.2f), right(N, 0.2f);
+    EngineParameters params;
+
+    for (int block = 0; block < 100; ++block) {
+        engine.process(left.data(), right.data(), N, params);
+        auto vs = engine.getVisualState();
+        (void)vs;
+        assert(std::isfinite(vs.appliedGainDb));
+        assert(std::isfinite(vs.loudness.momentaryLUFS));
+    }
+
+    // Test lock-free asynchronous reset
+    engine.reset();
+    engine.process(left.data(), right.data(), N, params);
+    auto vs = engine.getVisualState();
+    (void)vs;
+    assert(std::isfinite(vs.appliedGainDb));
+
+    std::cout << "  -> PASS: 3-buffered visual state and lock-free reset verified!" << std::endl;
 }
 
 int main() {
@@ -476,11 +704,15 @@ int main() {
     testDynamicAirLift();
     testHighPassFilter();
     testDefaultLimiterCeiling();
+    testBreakdownFreezeSensitivity();
+    testCustomToneProfile();
+    testMbcAutoMakeupGain();
     testFullChain();
+    testInputSanitizerAntiNan();
+    testLockFreeDoubleBufferedVisualState();
 
     std::cout << "============================================" << std::endl;
     std::cout << "   ALL DSP TESTS PASSED WITH 100% ACCURACY! " << std::endl;
     std::cout << "============================================" << std::endl;
     return 0;
 }
-

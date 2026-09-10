@@ -8,8 +8,9 @@
 namespace autolevel::dsp {
 
 enum class TargetProfile {
-    PINK_NOISE,
-    MODERN_MIX
+    PINK_NOISE = 0,
+    MODERN_MIX = 1,
+    CUSTOM = 2
 };
 
 class Bands {
@@ -92,7 +93,8 @@ public:
     static inline std::array<float, COUNT> thresholdsFor(
         bool tilted,
         float toneSlopeDbPerOctave,
-        TargetProfile profile = TargetProfile::PINK_NOISE,
+        TargetProfile profile = TargetProfile::MODERN_MIX,
+        const std::array<float, COUNT>& customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
         float baseThresholdDb = MBC_THRESHOLD_DB
     ) {
         std::array<float, COUNT> out{};
@@ -101,7 +103,12 @@ public:
             return out;
         }
 
-        const float* contour = (profile == TargetProfile::MODERN_MIX) ? MODERN_CONTOUR_DB.data() : nullptr;
+        const float* contour = nullptr;
+        if (profile == TargetProfile::MODERN_MIX) {
+            contour = MODERN_CONTOUR_DB.data();
+        } else if (profile == TargetProfile::CUSTOM) {
+            contour = customOffsetsDb.data();
+        }
         float mean = 0.0f;
         for (size_t b = 0; b < COUNT; ++b) {
             float density = toneSlopeDbPerOctave * (OCTAVES[b] - MEAN_OCTAVE);

@@ -41,6 +41,10 @@ public:
     }
 
     void update(const LevelerParams& params, const LoudnessReadings& readings, size_t blocksIntegrated, float dtSeconds) {
+        if (!params.freezeBreakdowns) {
+            m_isFrozen = false;
+        }
+
         if (!params.enabled || readings.integratedLUFS <= ABSOLUTE_GATE_LUFS || blocksIntegrated < 5) {
             m_targetGainDb = m_currentGainDb;
             return;

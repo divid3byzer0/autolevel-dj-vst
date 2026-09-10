@@ -5,7 +5,7 @@
 #include <cmath>
 #include <array>
 #include <algorithm>
-#include <mutex>
+#include <atomic>
 
 namespace autolevel::dsp {
 
@@ -49,22 +49,12 @@ public:
         reset();
     }
 
-    void reset() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_kFilter.reset();
-        m_currentStepSampleCount = 0;
-        m_currentStepEnergySum = 0.0;
-        std::fill(m_stepEnergies.begin(), m_stepEnergies.end(), 0.0);
-        m_stepIndex = 0;
-
-        std::fill(m_histogram.begin(), m_histogram.end(), 0.0);
-        m_blocksIntegrated = 0;
-        m_gatedMs = 0;
-
-        m_momentaryLUFS = SILENCE_LUFS;
-        m_shortTermLUFS = SILENCE_LUFS;
-        m_integratedLUFS = SILENCE_LUFS;
-        m_peakDbfs = SILENCE_LUFS;
+    /**
+     * Clears all measurement state. Must only be called from the audio thread
+     * (AutoLevelEngine defers reset requests from other threads into process()).
+     */
+    void reset() noexcept {
+        doReset();
     }
 
     /**
@@ -84,7 +74,7 @@ public:
         m_halfLifeSeconds = halfLifeForResponse(amount);
     }
 
-    void process(const float* left, const float* right, size_t numSamples) {
+    void process(const float* left, const float* right, size_t numSamples) noexcept {
         for (size_t i = 0; i < numSamples; ++i) {
             double l = left[i];
             double r = right[i];
@@ -115,8 +105,7 @@ public:
         }
     }
 
-    LoudnessReadings getReadings() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
+    LoudnessReadings getReadings() const noexcept {
         return {
             m_momentaryLUFS,
             m_shortTermLUFS,
@@ -140,8 +129,6 @@ private:
         double stepMeanPower = m_currentStepEnergySum / static_cast<double>(m_currentStepSampleCount);
         m_currentStepSampleCount = 0;
         m_currentStepEnergySum = 0.0;
-
-        std::lock_guard<std::mutex> lock(m_mutex);
 
         m_stepEnergies[m_stepIndex] = stepMeanPower;
         m_stepIndex = (m_stepIndex + 1) % m_shortTermSteps;
@@ -235,7 +222,23 @@ private:
     long m_gatedMs = 0;
     float m_halfLifeSeconds = 0.0f; // 0 = whole track by default
 
-    mutable std::mutex m_mutex;
+    void doReset() noexcept {
+        m_kFilter.reset();
+        m_currentStepSampleCount = 0;
+        m_currentStepEnergySum = 0.0;
+        std::fill(m_stepEnergies.begin(), m_stepEnergies.end(), 0.0);
+        m_stepIndex = 0;
+
+        std::fill(m_histogram.begin(), m_histogram.end(), 0.0);
+        m_blocksIntegrated = 0;
+        m_gatedMs = 0;
+
+        m_momentaryLUFS = SILENCE_LUFS;
+        m_shortTermLUFS = SILENCE_LUFS;
+        m_integratedLUFS = SILENCE_LUFS;
+        m_peakDbfs = SILENCE_LUFS;
+    }
+
     float m_momentaryLUFS = SILENCE_LUFS;
     float m_shortTermLUFS = SILENCE_LUFS;
     float m_integratedLUFS = SILENCE_LUFS;

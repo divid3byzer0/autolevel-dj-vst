@@ -9,6 +9,9 @@
 #include "SafetyLimiter.h"
 #include <atomic>
 #include <array>
+#include <cstring>
+#include <cmath>
+#include <algorithm>
 
 namespace autolevel::dsp {
 
@@ -22,9 +25,12 @@ struct EngineParameters {
     float maxCutDb = 12.0f;
     float levelResponse = 0.85f; // 0..1 slider, maps to memory half-life
     bool freezeBreakdowns = true;
+    float breakdownThresholdLU = 7.0f;
     float toneSlopeDbPerOctave = -1.5f; // -6.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
+    std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
+    bool mbcAutoMakeup = true;
     BassLiftMode bassLift = BassLiftMode::OFF;
     AirLiftMode airLift = AirLiftMode::OFF;
     // Backward compatibility aliases
@@ -45,12 +51,15 @@ struct EngineVisualState {
     bool isFrozen = false;
     std::array<float, Bands::COUNT> mbcGainReductionsDb{};
     std::array<float, Bands::COUNT> mbcThresholdsDb{};
+    std::array<float, Bands::COUNT> customOffsetsDb{};
     float limiterGainReductionDb = 0.0f;
     float outputPeakDbL = -60.0f;
     float outputPeakDbR = -60.0f;
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
+    bool activeMbcAutoMakeup = true;
+    float mbcAutoMakeupGainDb = 0.0f;
     BassLiftMode activeBassLift = BassLiftMode::OFF;
     float bassLiftDb = 0.0f;
     AirLiftMode activeAirLift = AirLiftMode::OFF;
@@ -79,27 +88,50 @@ public:
         m_mbc.prepare(sampleRate);
         m_hpf.prepare(sampleRate);
         m_limiter.prepare(sampleRate);
-        reset();
+        resetImmediate();
     }
 
+    /**
+     * Request an asynchronous reset of all measurement and filter history.
+     * The work itself is deferred to the next process() call so that filter state
+     * is only ever touched by the audio thread - doing it inline from the caller
+     * raced with the audio callback across every stage of the chain.
+     */
     void reset() {
-        m_loudnessMeter.reset();
-        m_leveler.reset();
-        m_bassLift.reset();
-        m_airLift.reset();
-        m_mbc.reset();
-        m_hpf.reset();
-        m_limiter.reset();
-        m_outPeakLinL = 0.0f;
-        m_outPeakLinR = 0.0f;
+        m_resetRequested.store(true, std::memory_order_release);
+    }
+
+    /**
+     * Perform the reset synchronously. Only safe while the audio thread is not
+     * running (construction / prepare()).
+     */
+    void resetImmediate() {
+        doReset();
     }
 
     /**
      * Exact chain: AGC -> Bass Lift -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
+        // Serviced before the bypass early-out so a reset requested while bypassed
+        // is not left pending indefinitely.
+        if (m_resetRequested.exchange(false, std::memory_order_acquire)) {
+            doReset();
+        }
+
         if (params.bypass || numSamples == 0) {
             return;
+        }
+
+        // Copy and sanitize input audio: guarantee clean finite samples (discard any NaN / Inf)
+        for (size_t s = 0; s < numSamples; ++s) {
+            float l = left[s];
+            float r = right[s];
+            uint32_t ul, ur;
+            std::memcpy(&ul, &l, sizeof(ul));
+            std::memcpy(&ur, &r, sizeof(ur));
+            left[s] = ((ul & 0x7f800000U) != 0x7f800000U) ? std::clamp(l, -8.0f, 8.0f) : 0.0f;
+            right[s] = ((ur & 0x7f800000U) != 0x7f800000U) ? std::clamp(r, -8.0f, 8.0f) : 0.0f;
         }
 
         // 1. Measure incoming raw perceived loudness (ITU-R BS.1770-4 K-weighting + dual-gating)
@@ -113,6 +145,7 @@ public:
         levelerParams.maxBoostDb = params.maxBoostDb;
         levelerParams.maxCutDb = params.maxCutDb;
         levelerParams.freezeBreakdowns = params.freezeBreakdowns;
+        levelerParams.breakdownThresholdLU = params.breakdownThresholdLU;
 
         float dtSeconds = static_cast<float>(numSamples) / static_cast<float>(m_sampleRate);
         m_leveler.update(levelerParams, readings, m_loudnessMeter.getBlocksIntegrated(), dtSeconds);
@@ -134,8 +167,10 @@ public:
         mbcParams.compressionAmount = params.compressionAmount;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
+        mbcParams.customOffsetsDb = params.customOffsetsDb;
         mbcParams.baseThresholdDb = params.targetLUFS - 15.0f; // Exact -24 dBFS at default -9 LUFS
         mbcParams.speed = params.mbcSpeed;
+        mbcParams.autoMakeup = params.mbcAutoMakeup;
         m_mbc.process(left, right, numSamples, mbcParams);
 
         // 5. Stage 3: Post-MBC Gain stage (makeup/trim before safety limiter)
@@ -167,41 +202,71 @@ public:
         m_outPeakLinL = (blockPeakL > m_outPeakLinL) ? blockPeakL : std::max(0.0f, m_outPeakLinL - decayLin);
         m_outPeakLinR = (blockPeakR > m_outPeakLinR) ? blockPeakR : std::max(0.0f, m_outPeakLinR - decayLin);
 
-        // 7. Cache state for UI
-        m_visualState.loudness = readings;
-        m_visualState.appliedGainDb = m_leveler.getCurrentGainDb();
-        m_visualState.targetGainDb = m_leveler.getTargetGainDb();
-        m_visualState.isFrozen = m_leveler.isFrozen();
-        m_visualState.mbcGainReductionsDb = m_mbc.getGainReductionsDb();
-        m_visualState.mbcThresholdsDb = Bands::thresholdsFor(
-            true, params.toneSlopeDbPerOctave, params.targetProfile, mbcParams.baseThresholdDb
+        // 7. Cache state for UI into a buffer no reader can currently be holding.
+        // With only two buffers the writer reclaims the published buffer on the
+        // very next block, so a reader preempted mid-copy could be overwritten.
+        // Three buffers plus a cursor that never targets the published one give
+        // the reader a full extra block of grace.
+        size_t published = m_activeVisualIndex.load(std::memory_order_relaxed);
+        size_t writeIdx = m_nextVisualIndex;
+        if (writeIdx == published) writeIdx = (writeIdx + 1) % VISUAL_BUFFERS;
+        auto& vs = m_visualStates[writeIdx];
+
+        vs.loudness = readings;
+        vs.appliedGainDb = m_leveler.getCurrentGainDb();
+        vs.targetGainDb = m_leveler.getTargetGainDb();
+        vs.isFrozen = params.freezeBreakdowns && m_leveler.isFrozen();
+        vs.mbcGainReductionsDb = m_mbc.getGainReductionsDb();
+        vs.customOffsetsDb = params.customOffsetsDb;
+        vs.mbcThresholdsDb = Bands::thresholdsFor(
+            true, params.toneSlopeDbPerOctave, params.targetProfile, params.customOffsetsDb, mbcParams.baseThresholdDb
         );
-        m_visualState.limiterGainReductionDb = m_limiter.getGainReductionDb();
-        m_visualState.outputPeakDbL = (m_outPeakLinL > 1e-4f) ? (20.0f * std::log10(m_outPeakLinL)) : -60.0f;
-        m_visualState.outputPeakDbR = (m_outPeakLinR > 1e-4f) ? (20.0f * std::log10(m_outPeakLinR)) : -60.0f;
-        m_visualState.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
-        m_visualState.activeProfile = params.targetProfile;
-        m_visualState.activeMbcSpeed = params.mbcSpeed;
-        m_visualState.activeBassLift = effBass;
-        m_visualState.bassLiftDb = m_bassLift.getLiftDb();
-        m_visualState.activeAirLift = effAir;
-        m_visualState.airLiftDb = m_airLift.getLiftDb();
+        vs.limiterGainReductionDb = m_limiter.getGainReductionDb();
+        vs.outputPeakDbL = (m_outPeakLinL > 1e-4f) ? (20.0f * std::log10(m_outPeakLinL)) : -60.0f;
+        vs.outputPeakDbR = (m_outPeakLinR > 1e-4f) ? (20.0f * std::log10(m_outPeakLinR)) : -60.0f;
+        vs.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
+        vs.activeProfile = params.targetProfile;
+        vs.activeMbcSpeed = params.mbcSpeed;
+        vs.activeMbcAutoMakeup = params.mbcAutoMakeup;
+        vs.mbcAutoMakeupGainDb = m_mbc.getAutoMakeupGainDb();
+        vs.activeBassLift = effBass;
+        vs.bassLiftDb = m_bassLift.getLiftDb();
+        vs.activeAirLift = effAir;
+        vs.airLiftDb = m_airLift.getLiftDb();
         // UI compatibility
-        m_visualState.activeSubWeight = effBass;
-        m_visualState.subInjectedLevel = m_bassLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
-        m_visualState.activeAirWeight = effAir;
-        m_visualState.airInjectedLevel = m_airLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
-        m_visualState.activeToneSlope = params.toneSlopeDbPerOctave;
-        m_visualState.postMbcGainDb = params.postMbcGainDb;
-        m_visualState.hpfCutoffHz = m_hpf.getCutoffHz();
-        m_visualState.hpfEnabled = m_hpf.isEnabled();
+        vs.activeSubWeight = effBass;
+        vs.subInjectedLevel = m_bassLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
+        vs.activeAirWeight = effAir;
+        vs.airInjectedLevel = m_airLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
+        vs.activeToneSlope = params.toneSlopeDbPerOctave;
+        vs.postMbcGainDb = params.postMbcGainDb;
+        vs.hpfCutoffHz = m_hpf.getCutoffHz();
+        vs.hpfEnabled = m_hpf.isEnabled();
+
+        // Atomically publish new visual state buffer
+        m_activeVisualIndex.store(writeIdx, std::memory_order_release);
+        m_nextVisualIndex = (writeIdx + 1) % VISUAL_BUFFERS;
     }
 
     EngineVisualState getVisualState() const noexcept {
-        return m_visualState;
+        size_t readIdx = m_activeVisualIndex.load(std::memory_order_acquire);
+        return m_visualStates[readIdx];
     }
 
 private:
+    void doReset() {
+        m_loudnessMeter.reset();
+        m_leveler.reset();
+        m_bassLift.reset();
+        m_airLift.reset();
+        m_mbc.reset();
+        m_hpf.reset();
+        m_limiter.reset();
+        m_outPeakLinL = 0.0f;
+        m_outPeakLinR = 0.0f;
+    }
+
+    std::atomic<bool> m_resetRequested{false};
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
@@ -214,7 +279,10 @@ private:
     float m_outPeakLinL = 0.0f;
     float m_outPeakLinR = 0.0f;
 
-    EngineVisualState m_visualState;
+    static constexpr size_t VISUAL_BUFFERS = 3;
+    std::array<EngineVisualState, VISUAL_BUFFERS> m_visualStates{};
+    std::atomic<size_t> m_activeVisualIndex{0};
+    size_t m_nextVisualIndex{1};   // audio thread only
 };
 
 } // namespace autolevel::dsp
