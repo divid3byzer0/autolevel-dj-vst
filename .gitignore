@@ -15,3 +15,5 @@ cmake-build-*/
 *.suo
 *.sln
 compile_commands.json
+package/
+*.zip
