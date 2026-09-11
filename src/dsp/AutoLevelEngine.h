@@ -26,7 +26,7 @@ struct EngineParameters {
     float levelResponse = 0.85f; // 0..1 slider, maps to memory half-life
     bool freezeBreakdowns = true;
     float breakdownThresholdLU = 7.0f;
-    float toneSlopeDbPerOctave = -1.5f; // -6.0 to 0.0 dB/oct
+    float toneSlopeDbPerOctave = -1.5f; // -3.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
@@ -168,7 +168,11 @@ public:
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
         mbcParams.customOffsetsDb = params.customOffsetsDb;
-        mbcParams.baseThresholdDb = params.targetLUFS - 15.0f; // Exact -24 dBFS at default -9 LUFS
+        // At the plugin's actual default (targetLUFS = -14 dBFS, see EngineParameters
+        // below and PluginProcessor::createParameterLayout), this comes out to -29 dBFS.
+        // -24 dBFS (Bands::MBC_THRESHOLD_DB, "exactly matching Android Shaper.kt") is only
+        // reached if the user manually sets Target LUFS back to the old -9 dBFS default.
+        mbcParams.baseThresholdDb = params.targetLUFS - 15.0f;
         mbcParams.speed = params.mbcSpeed;
         mbcParams.autoMakeup = params.mbcAutoMakeup;
         m_mbc.process(left, right, numSamples, mbcParams);

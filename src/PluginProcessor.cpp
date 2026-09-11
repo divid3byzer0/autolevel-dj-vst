@@ -42,7 +42,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_TONE_SLOPE, 1},
         "Tone Slope",
-        juce::NormalisableRange<float>(-6.0f, 0.0f, 0.1f),
+        juce::NormalisableRange<float>(-3.0f, 0.0f, 0.1f),
         -1.5f,
         juce::AudioParameterFloatAttributes().withLabel("dB/oct")));
 

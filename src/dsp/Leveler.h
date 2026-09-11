@@ -7,7 +7,9 @@
 namespace autolevel::dsp {
 
 struct LevelerParams {
-    float targetLUFS = -9.0f;       // DJ club target level (-9.0) or streaming (-18.0)
+    // Always overwritten by AutoLevelEngine::process() from EngineParameters::targetLUFS
+    // before use; this default only matters for code constructing LevelerParams directly.
+    float targetLUFS = -14.0f;      // Matches the plugin's actual default (see EngineParameters)
     float maxBoostDb = 12.0f;       // Maximum boost (12 dB default from Android)
     float maxCutDb = 12.0f;         // Maximum attenuation (12 dB default from Android)
     bool freezeBreakdowns = true;   // Don't boost into breakdowns

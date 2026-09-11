@@ -141,14 +141,14 @@ Pre-compiled binary packages for macOS and Windows are published under [GitHub R
 
 | Control | Range | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Target LUFS** | −24 to −4 LUFS | **−9 LUFS** | Master integrated loudness target for club sound systems. |
-| **Tone Tilt** | −5.0 to −2.5 dB/oct | **−3.75 dB/oct** | Spectral target balance. Warmer (−4.5) to Brighter (−3.0). |
+| **Target LUFS** | −24 to −4 LUFS | **−14 LUFS** | Master integrated loudness target. |
+| **Tone Tilt** | −3.0 to 0.0 dB/oct | **−1.5 dB/oct** | Spectral target balance. Flatter (0) to Darker (−3.0). |
 | **Tone Shaping** | 0% to 100% | **50%** | Multiband compressor depth for dynamic tonal control. |
-| **Max Boost** | 0 to 12 dB | **+6 dB** | Maximum upward gain the leveler can apply. |
+| **Max Boost** | 0 to 18 dB | **+12 dB** | Maximum upward gain the leveler can apply. |
 | **Max Cut** | 0 to 18 dB | **−12 dB** | Maximum downward attenuation for hot tracks. |
-| **Slew Speed** | Slow / Normal / Fast | **Normal** | Upward leveling speed (0.5, 0.75, or 1.5 dB/s). |
+| **MBC Speed** | Slow / Normal / Fast | **Normal** | Multiband compressor attack/release ballistics (not the AGC leveler's slew rate — see [docs/PLUGIN_DOCUMENTATION.md](docs/PLUGIN_DOCUMENTATION.md) for the full leveler slew-rate behavior, which is currently fixed). |
 | **Breakdown Freeze** | On / Off | **On** | Freezes upward gain boost during breakdowns and quiet intros. |
-| **Amp Ceiling** | −2.0 to 0.0 dBFS | **−0.5 dBFS** | Brickwall ceiling guarding audio converters and power amps. |
+| **Amp Ceiling** | −3.0 to 0.0 dBFS | **−0.3 dBFS** | Brickwall ceiling guarding audio converters and power amps. |
 | **Reset Set** | Button | — | Clears integrated loudness history and locks onto incoming track. |
 
 ---

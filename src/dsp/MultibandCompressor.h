@@ -18,7 +18,7 @@ struct MBCParams {
     bool enabled = true;
     bool autoMakeup = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
-    float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-6.0 to 0.0 dB/oct, default -2.0)
+    float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-3.0 to 0.0 dB/oct, default -2.0)
     TargetProfile profile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     float baseThresholdDb = Bands::MBC_THRESHOLD_DB;

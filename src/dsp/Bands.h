@@ -62,9 +62,12 @@ public:
 
     static constexpr float MEAN_OCTAVE = 9.970562f;
 
-    static constexpr float MIN_TONE_SLOPE = -6.0f;
+    // Not referenced anywhere else in the codebase (the actual UI-exposed range/default
+    // live on the "Tone Slope" AudioParameterFloat in PluginProcessor::createParameterLayout).
+    // Kept here, matching that parameter, purely for documentation.
+    static constexpr float MIN_TONE_SLOPE = -3.0f;
     static constexpr float MAX_TONE_SLOPE = 0.0f;
-    static constexpr float DEFAULT_TONE_SLOPE = -2.0f;
+    static constexpr float DEFAULT_TONE_SLOPE = -1.5f;
 
     static constexpr float MBC_THRESHOLD_DB = -24.0f;
     static constexpr float MAX_RATIO = 4.0f;
