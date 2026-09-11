@@ -500,6 +500,99 @@ void testBreakdownFreezeSensitivity() {
     std::cout << "  -> PASS: Breakdown Freeze 3-way sensitivity logic verified!" << std::endl;
 }
 
+void testLevelerSlewSpeed() {
+    std::cout << "[TEST] Leveler Slew Speed (Slow/Normal/Fast steady-state rates)..." << std::endl;
+
+    // Measures the steady-state (post fast-lock) dB/s rate for a given speed & direction.
+    // Two-phase: prime past the 8s fast-lock window with a ZERO loudness gap (so
+    // currentGainDb stays at 0 and never saturates against the +-12dB clamp while the
+    // fast-lock timer advances), then introduce a large gap and measure a single 10ms
+    // block's step from that known, unsaturated starting point.
+    auto measureSteadyRate = [](LevelerSpeed speed, bool measureUpward) -> float {
+        Leveler leveler;
+        leveler.prepare(48000.0);
+
+        LevelerParams params;
+        params.targetLUFS = -9.0f;
+        params.maxBoostDb = 12.0f;
+        params.maxCutDb = 12.0f;
+        params.freezeBreakdowns = false;
+        params.speed = speed;
+
+        float dt = 0.01f;
+        LoudnessReadings zeroGap;
+        zeroGap.integratedLUFS = params.targetLUFS;
+        zeroGap.momentaryLUFS = params.targetLUFS;
+        for (int i = 0; i < 850; ++i) { // 8.5s of 10ms blocks -> past the 8s fast-lock window
+            leveler.update(params, zeroGap, 100, dt);
+        }
+
+        LoudnessReadings bigGap;
+        bigGap.integratedLUFS = measureUpward ? -60.0f : 60.0f; // far outside the +-12dB clamp
+        bigGap.momentaryLUFS = bigGap.integratedLUFS;
+
+        float before = leveler.getCurrentGainDb();
+        leveler.update(params, bigGap, 100, dt);
+        float after = leveler.getCurrentGainDb();
+        return (after - before) / dt;
+    };
+
+    float slowUp = measureSteadyRate(LevelerSpeed::SLOW, true);
+    float normalUp = measureSteadyRate(LevelerSpeed::NORMAL, true);
+    float fastUp = measureSteadyRate(LevelerSpeed::FAST, true);
+    float slowDown = measureSteadyRate(LevelerSpeed::SLOW, false);
+    float normalDown = measureSteadyRate(LevelerSpeed::NORMAL, false);
+    float fastDown = measureSteadyRate(LevelerSpeed::FAST, false);
+
+    std::cout << "  Steady-state UP   -> Slow: " << slowUp << " dB/s, Normal: " << normalUp
+              << " dB/s, Fast: " << fastUp << " dB/s" << std::endl;
+    std::cout << "  Steady-state DOWN -> Slow: " << slowDown << " dB/s, Normal: " << normalDown
+              << " dB/s, Fast: " << fastDown << " dB/s" << std::endl;
+
+    assert(std::abs(slowUp - 0.5f) < 0.01f);
+    assert(std::abs(normalUp - 0.75f) < 0.01f);
+    assert(std::abs(fastUp - 1.5f) < 0.01f);
+    assert(std::abs(slowDown - (-1.0f)) < 0.01f);
+    assert(std::abs(normalDown - (-1.5f)) < 0.01f);
+    assert(std::abs(fastDown - (-3.0f)) < 0.01f);
+    std::cout << "  -> PASS: Slow/Normal/Fast steady-state rates match spec; Normal is bit-exact"
+                 " with the original hardcoded 0.75/1.5 dB/s behavior." << std::endl;
+
+    // Fast-lock window (first 8s) must be unaffected by Slew Speed: always 4.0 up / 16.0 down.
+    auto measureFastLockRate = [](LevelerSpeed speed, bool measureUpward) -> float {
+        Leveler leveler;
+        leveler.prepare(48000.0);
+        LevelerParams params;
+        params.targetLUFS = -9.0f;
+        params.maxBoostDb = 12.0f;
+        params.maxCutDb = 12.0f;
+        params.freezeBreakdowns = false;
+        params.speed = speed;
+        LoudnessReadings readings;
+        readings.integratedLUFS = measureUpward ? -60.0f : 60.0f;
+        readings.momentaryLUFS = readings.integratedLUFS;
+        float dt = 0.01f;
+        float before = leveler.getCurrentGainDb();
+        leveler.update(params, readings, 100, dt); // first call: still inside the fast-lock window
+        float after = leveler.getCurrentGainDb();
+        return (after - before) / dt;
+    };
+
+    float fastLockUpSlow = measureFastLockRate(LevelerSpeed::SLOW, true);
+    float fastLockUpFast = measureFastLockRate(LevelerSpeed::FAST, true);
+    float fastLockDownSlow = measureFastLockRate(LevelerSpeed::SLOW, false);
+    float fastLockDownFast = measureFastLockRate(LevelerSpeed::FAST, false);
+
+    std::cout << "  Fast-lock UP (Slow vs Fast setting):   " << fastLockUpSlow << " vs " << fastLockUpFast << " dB/s" << std::endl;
+    std::cout << "  Fast-lock DOWN (Slow vs Fast setting): " << fastLockDownSlow << " vs " << fastLockDownFast << " dB/s" << std::endl;
+
+    assert(std::abs(fastLockUpSlow - 4.0f) < 0.01f);
+    assert(std::abs(fastLockUpFast - 4.0f) < 0.01f);
+    assert(std::abs(fastLockDownSlow - (-16.0f)) < 0.01f);
+    assert(std::abs(fastLockDownFast - (-16.0f)) < 0.01f);
+    std::cout << "  -> PASS: Fast-lock window rates are identical regardless of Slew Speed." << std::endl;
+}
+
 void testCustomToneProfile() {
     std::cout << "[TEST] Custom Target Contour thresholds and zero-sum re-centering..." << std::endl;
     std::array<float, 6> customOffsets = { 3.0f, -4.0f, 1.0f, 2.0f, -3.0f, 1.0f };
@@ -705,6 +798,7 @@ int main() {
     testHighPassFilter();
     testDefaultLimiterCeiling();
     testBreakdownFreezeSensitivity();
+    testLevelerSlewSpeed();
     testCustomToneProfile();
     testMbcAutoMakeupGain();
     testFullChain();

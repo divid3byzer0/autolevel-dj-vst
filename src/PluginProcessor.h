@@ -47,6 +47,7 @@ public:
     static constexpr const char* ID_MAX_BOOST = "max_boost";
     static constexpr const char* ID_MAX_CUT = "max_cut";
     static constexpr const char* ID_LEVEL_RESPONSE = "level_response";
+    static constexpr const char* ID_SLEW_SPEED = "slew_speed";
     static constexpr const char* ID_COMPRESSION_AMOUNT = "compression_amount";
     static constexpr const char* ID_TONE_SLOPE = "tone_slope";
     static constexpr const char* ID_TARGET_PROFILE = "target_profile";
@@ -68,6 +69,7 @@ private:
     std::atomic<float>* m_maxBoostParam = nullptr;
     std::atomic<float>* m_maxCutParam = nullptr;
     std::atomic<float>* m_levelResponseParam = nullptr;
+    std::atomic<float>* m_slewSpeedParam = nullptr;
     std::atomic<float>* m_compressionAmountParam = nullptr;
     std::atomic<float>* m_toneSlopeParam = nullptr;
     std::atomic<float>* m_targetProfileParam = nullptr;

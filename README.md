@@ -146,7 +146,8 @@ Pre-compiled binary packages for macOS and Windows are published under [GitHub R
 | **Tone Shaping** | 0% to 100% | **50%** | Multiband compressor depth for dynamic tonal control. |
 | **Max Boost** | 0 to 18 dB | **+12 dB** | Maximum upward gain the leveler can apply. |
 | **Max Cut** | 0 to 18 dB | **−12 dB** | Maximum downward attenuation for hot tracks. |
-| **MBC Speed** | Slow / Normal / Fast | **Normal** | Multiband compressor attack/release ballistics (not the AGC leveler's slew rate — see [docs/PLUGIN_DOCUMENTATION.md](docs/PLUGIN_DOCUMENTATION.md) for the full leveler slew-rate behavior, which is currently fixed). |
+| **Slew Speed** | Slow / Normal / Fast | **Normal** | AGC gain-change speed once a new target is computed: 0.5/0.75/1.5 dB/s upward (2x that downward). Separate from Level Response, which controls how fast the loudness *measurement* itself reacts. |
+| **MBC Speed** | Slow / Normal / Fast | **Normal** | Multiband compressor attack/release ballistics — a different stage from Slew Speed above (see [docs/PLUGIN_DOCUMENTATION.md](docs/PLUGIN_DOCUMENTATION.md) for the full signal chain). |
 | **Breakdown Freeze** | On / Off | **On** | Freezes upward gain boost during breakdowns and quiet intros. |
 | **Amp Ceiling** | −3.0 to 0.0 dBFS | **−0.3 dBFS** | Brickwall ceiling guarding audio converters and power amps. |
 | **Reset Set** | Button | — | Clears integrated loudness history and locks onto incoming track. |

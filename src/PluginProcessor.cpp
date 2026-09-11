@@ -32,6 +32,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         0.85f,
         juce::AudioParameterFloatAttributes().withLabel("%")));
 
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_SLEW_SPEED, 1},
+        "Slew Speed",
+        juce::StringArray{"Slow", "Normal", "Fast"},
+        1)); // Default: Normal (0.75 dB/s up / 1.5 dB/s down, matching the original fixed behavior)
+
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ID_COMPRESSION_AMOUNT, 1},
         "Compression",
@@ -114,6 +120,7 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_maxBoostParam = m_apvts.getRawParameterValue(ID_MAX_BOOST);
     m_maxCutParam = m_apvts.getRawParameterValue(ID_MAX_CUT);
     m_levelResponseParam = m_apvts.getRawParameterValue(ID_LEVEL_RESPONSE);
+    m_slewSpeedParam = m_apvts.getRawParameterValue(ID_SLEW_SPEED);
     m_compressionAmountParam = m_apvts.getRawParameterValue(ID_COMPRESSION_AMOUNT);
     m_toneSlopeParam = m_apvts.getRawParameterValue(ID_TONE_SLOPE);
     m_targetProfileParam = m_apvts.getRawParameterValue(ID_TARGET_PROFILE);
@@ -175,6 +182,11 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     params.levelResponse = m_levelResponseParam ? m_levelResponseParam->load() : 0.85f;
     params.compressionAmount = m_compressionAmountParam ? m_compressionAmountParam->load() : 0.5f;
     params.toneSlopeDbPerOctave = m_toneSlopeParam ? m_toneSlopeParam->load() : -1.5f;
+
+    int slewSpeedIdx = m_slewSpeedParam ? juce::roundToInt(m_slewSpeedParam->load()) : 1;
+    if (slewSpeedIdx == 0) params.slewSpeed = autolevel::dsp::LevelerSpeed::SLOW;
+    else if (slewSpeedIdx == 2) params.slewSpeed = autolevel::dsp::LevelerSpeed::FAST;
+    else params.slewSpeed = autolevel::dsp::LevelerSpeed::NORMAL;
 
     int profileIdx = m_targetProfileParam ? juce::roundToInt(m_targetProfileParam->load()) : 1;
     params.targetProfile = (profileIdx == 0)

@@ -133,12 +133,22 @@ then moves the *applied* gain toward that target with an **asymmetric slew rate*
 
 | State | Upward rate | Downward rate |
 |---|---|---|
-| Fast lock (first 8s after `reset()`) | 4.0 dB/s | 16.0 dB/s (4×) |
-| Steady state | 0.75 dB/s | 1.5 dB/s (2×) |
+| Fast lock (first 8s after `reset()`) | 4.0 dB/s (fixed, all speeds) | 16.0 dB/s (4×, fixed, all speeds) |
+| Steady state, Slew Speed = Slow | 0.5 dB/s | 1.0 dB/s (2×) |
+| Steady state, Slew Speed = Normal (default) | 0.75 dB/s | 1.5 dB/s (2×) |
+| Steady state, Slew Speed = Fast | 1.5 dB/s | 3.0 dB/s (2×) |
 
 Downward moves are always faster than upward — a track coming in "too hot" gets pulled down
 quickly (protects the room/ears), while a quiet track gets boosted slowly and musically (avoids
-audible pumping on transitions). The "fast lock" window only starts counting once
+audible pumping on transitions). The **"Slew Speed"** parameter (`LevelerParams::speed`,
+`LevelerSpeed::{SLOW,NORMAL,FAST}`) only affects the *steady-state* rate — the 8-second
+"fast lock" window after `reset()` always uses its own fixed 4.0/16.0 dB/s rates regardless of
+this setting, since fast-lock is about establishing an initial baseline quickly, a different
+concern from steady-state reactivity. This is **distinct from "MBC Speed"** (§3.5), which
+governs the multiband compressor's per-band ballistics, not the AGC gain rider. It's also
+distinct from **"Level Response"** (§3.2), which controls how fast the *measurement* (integrated
+LUFS estimate) reacts — Slew Speed controls how fast the *applied gain* chases whatever that
+measurement currently says. The "fast lock" window only starts counting once
 `blocksIntegrated >= 5` (~500ms of valid, gated audio) and only resets via `Leveler::reset()`
 (wired to the "Reset Set / Integration" button, or `prepareToPlay`) — it does **not**
 automatically reset at the start of every new track, only on manual reset or plugin
@@ -195,10 +205,12 @@ independently (6 dB soft-knee, per-band attack/release), then sums the bands bac
 
 "MBC Speed" (Slow/Normal/Fast) scales all six pairs at once: Slow doubles both times, Fast
 roughly halves them (see `MultibandCompressor::updateSpeed()`). **This is a completely
-different control from any AGC "slew rate"** — it only affects how quickly each band's
-compressor envelope reacts, not how fast the overall makeup gain rider (§3.3) moves. See §5 for
-the historical naming confusion here (the README used to document a "Slew Speed" control that
-doesn't exist; this MBC Speed control is what actually ships).
+different control from the AGC's "Slew Speed"** (§3.3, §4) — it only affects how quickly each
+band's compressor envelope reacts, not how fast the overall makeup gain rider moves. Historical
+note: the README used to document a "Slew Speed" control that, at the time, didn't actually
+exist anywhere (this MBC Speed control was the only "speed" knob that shipped) — a real,
+separate AGC Slew Speed parameter was added on 2026-09-11 (§8) specifically to make that
+documented behavior true.
 
 **Phase-corrected recombination:** naively summing an LR4 low-pass and high-pass from the same
 crossover does *not* reconstruct flat — it sums to a 2nd-order allpass at the crossover
@@ -296,6 +308,7 @@ state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
 | `max_boost` | Max Boost | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` upward clamp |
 | `max_cut` | Max Cut | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` downward clamp |
 | `level_response` | Level Response | Float | 0 to 1 (0.01 step) | 0.85 | `LoudnessMeter` histogram decay half-life (§3.2) — **not** the leveler's slew rate |
+| `slew_speed` | Slew Speed | Choice | Slow / Normal / Fast | Normal | `Leveler` steady-state gain slew rate (§3.3) — **not** `mbc_speed` below, a different stage entirely. Added 2026-09-11 (§8) |
 | `compression_amount` | Compression | Float | 0 to 1 (0.01 step) | 0.50 | `MultibandCompressor` ratio (1.0–4.0) and enable gate (`>= 0.02`) |
 | `tone_slope` | Tone Slope ("Tone Tilt") | Float | −3.0 to 0.0 dB/oct (0.1 step) | −1.5 dB/oct | `MultibandCompressor` threshold tilt |
 | `target_profile` | Target Profile | Choice | Pink Noise (Linear) / Modern Mix (Contoured) | Modern Mix | `MultibandCompressor` threshold contour. Note: `TargetProfile::CUSTOM` exists in the DSP enum but has no 3rd UI choice — unreachable from the plugin |
@@ -321,12 +334,6 @@ from any `AudioProcessorValueTreeState` parameter, so they always run at their h
   detection. `Leveler` supports a configurable threshold (tested with 5/7/9 LU sensitivity in
   `testBreakdownFreezeSensitivity`) but the plugin only exposes a plain On/Off toggle, always
   using 7 LU ("Normal" sensitivity) when on.
-- **A dedicated AGC "slew rate" control.** The Leveler's upward/downward slew rates (§3.3) are
-  compile-time constants. The README previously documented a "Slew Speed: Slow/Normal/Fast →
-  0.5/0.75/1.5 dB/s" control that **does not exist** — the actual "MBC Speed" UI control
-  changes multiband compressor ballistics instead (§3.5), an unrelated stage of the chain. This
-  was corrected in the README on 2026-09-11. Whether to actually add a Slew Speed parameter is
-  an open product decision — see the changelog (§8) for status.
 - **`TargetProfile::CUSTOM`** and its `customOffsetsDb` array — implemented and tested
   (`testCustomToneProfile`), but the "Target Profile" combo box only offers 2 choices, so this
   path is dead code from the plugin's actual entry point today.
@@ -346,7 +353,7 @@ clang++ -std=c++20 -O0 -g -Isrc -UNDEBUG -o dsp_test tests/dsp_test.cpp
 # Full plugin build (fetches JUCE 8.0.6 via CMake FetchContent — first run is slow):
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-./build/dsp_test                     # same 17 tests, built via CMake this time
+./build/dsp_test                     # same 18 tests, built via CMake this time
 cmake --build build --target install_plugins   # installs VST3+AU to ~/Library/Audio/Plug-Ins
 ```
 
@@ -354,7 +361,7 @@ CI (`.github/workflows/build-and-release.yml`) builds macOS (Universal VST3/AU/S
 Windows x64/x86 (VST3/Standalone) on every version tag push or manual dispatch, runs `dsp_test`
 on each platform, and publishes a GitHub Release with zipped artifacts per platform.
 
-The test suite (`tests/dsp_test.cpp`, 17 tests) exercises `AutoLevelEngine` and every DSP
+The test suite (`tests/dsp_test.cpp`, 18 tests) exercises `AutoLevelEngine` and every DSP
 submodule directly — K-weighting calibration, LR4 crossover flatness, EBU R128 loudness
 accuracy across levels, MBC speed ballistics (including a regression test that `prepare()`
 doesn't silently revert a selected Slow/Fast speed back to Normal), breakdown-freeze
@@ -389,7 +396,7 @@ documentation corrections. Keep this updated any time you fix something similar.
 
 ### 2026-09-11 — Bug hunt + parameter/documentation corrections
 
-A structured bug hunt (build the DSP suite standalone, run all 17 tests, do a full JUCE build,
+A structured bug hunt (build the DSP suite standalone, run all 18 tests, do a full JUCE build,
 then verify specific hypotheses with small standalone test programs rather than reporting
 guesses) found:
 
@@ -415,14 +422,20 @@ guesses) found:
    were already correct in code — only the README's Controls Reference table was stale (it said
    0–12 dB/+6 dB and −2.0–0.0 dBFS/−0.5 dBFS respectively). README corrected to match the code
    that actually ships.
-4. **README's "Slew Speed" row corrected** to stop documenting a control that doesn't exist
-   (§5) — it now describes the real "MBC Speed" control and points here for the full picture.
-   Whether to add a real, dedicated AGC slew-rate parameter is **pending a decision** — update
-   this entry once resolved, and move the corresponding item out of §5 if implemented.
+4. **Added a real "Slew Speed" (Slow/Normal/Fast) parameter** (`slew_speed`, §4) controlling the
+   `Leveler`'s steady-state gain-change rate — 0.5/0.75/1.5 dB/s upward, always 2× that
+   downward; Normal is bit-exact with the original hardcoded 0.75/1.5 dB/s behavior, so
+   existing sessions/presets that don't touch this parameter are unaffected. The 8-second
+   fast-lock window (§3.3) deliberately keeps its own fixed 4.0/16.0 dB/s rates regardless of
+   this setting. This makes the README's control table (previously misdescribing "MBC Speed" as
+   the AGC slew control) actually true. New DSP-level regression test:
+   `testLevelerSlewSpeed` in `tests/dsp_test.cpp`. New UI: a "SLEW: SLOW/NORMAL/FAST" segmented
+   row in Card 2 (AGC Gain Correction), below the Breakdown Freeze toggle — verified visually
+   via a Standalone app screenshot (no layout overlap/clipping).
 5. Ruled out (tested, not bugs): loudness-meter ramp-up dilution falsely triggering
    breakdown-freeze (disproven — delta never crosses the false-positive direction); MBC
    bypass/re-enable leaving crossover filter state stale (disproven — no measurable glitch,
    settling time is sub-millisecond at these crossover frequencies).
 
-All 17 tests in `tests/dsp_test.cpp` pass after these changes; a full JUCE CMake build was
-re-verified clean.
+All 18 tests in `tests/dsp_test.cpp` pass after these changes; a full JUCE CMake build (VST3/AU/
+Standalone) was re-verified clean after each round of changes.

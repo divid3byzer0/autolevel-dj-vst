@@ -6,6 +6,12 @@
 
 namespace autolevel::dsp {
 
+enum class LevelerSpeed {
+    SLOW,
+    NORMAL,
+    FAST
+};
+
 struct LevelerParams {
     // Always overwritten by AutoLevelEngine::process() from EngineParameters::targetLUFS
     // before use; this default only matters for code constructing LevelerParams directly.
@@ -15,13 +21,19 @@ struct LevelerParams {
     bool freezeBreakdowns = true;   // Don't boost into breakdowns
     float breakdownThresholdLU = 7.0f; // LU drop below integrated to trigger freeze
     bool enabled = true;
+    LevelerSpeed speed = LevelerSpeed::NORMAL; // Steady-state upward/downward slew rate ("Slew Speed")
 };
 
 /**
  * Leveler matching Android Leveler.kt:
  * - Asymmetric slew:
- *     Fast lock (first 8 s): 4.0 dB/s base, 4x downward multiplier (16 dB/s)
- *     Steady state: 0.75 dB/s base, 2x downward multiplier (1.5 dB/s)
+ *     Fast lock (first 8 s): always 4.0 dB/s base, 4x downward multiplier (16 dB/s),
+ *       regardless of the "Slew Speed" parameter below - this initial lock-on window
+ *       is a separate concern from steady-state reactivity.
+ *     Steady state: base dB/s set by LevelerParams::speed, always 2x downward multiplier:
+ *         Slow:   0.5 dB/s up, 1.0 dB/s down
+ *         Normal: 0.75 dB/s up, 1.5 dB/s down (matches the original hardcoded behavior)
+ *         Fast:   1.5 dB/s up, 3.0 dB/s down
  * - Online gated mean from 1 dB histogram
  * - Smooth block interpolation
  */
@@ -72,21 +84,27 @@ public:
             m_targetGainDb = clampedDesired;
         }
 
-        // Fast lock for initial 8 seconds of track (from Android Leveler.kt)
+        // Fast lock for initial 8 seconds of track (from Android Leveler.kt).
+        // Always uses the same fixed rates regardless of LevelerParams::speed - fast lock is
+        // about establishing an initial baseline quickly, not steady-state reactivity.
         constexpr long FAST_LOCK_MS = 8000;
-        constexpr float FAST_SLEW_DB_S = 4.0f;
-        constexpr float SLOW_SLEW_DB_S = 0.75f;
-        constexpr float FAST_DOWN_MULTIPLIER = 4.0f;
-        constexpr float SLOW_DOWN_MULTIPLIER = 2.0f;
+        constexpr float FAST_LOCK_SLEW_DB_S = 4.0f;
+        constexpr float FAST_LOCK_DOWN_MULTIPLIER = 4.0f;
+        constexpr float STEADY_DOWN_MULTIPLIER = 2.0f;
 
         bool isFastLock = (m_fastLockTimerMs < FAST_LOCK_MS);
         if (isFastLock) {
             m_fastLockTimerMs += static_cast<long>(dtSeconds * 1000.0f);
         }
 
-        float base = isFastLock ? FAST_SLEW_DB_S : SLOW_SLEW_DB_S;
+        // Steady-state upward rate selected by the "Slew Speed" parameter.
+        float steadyUpSlewDbS = 0.75f;
+        if (params.speed == LevelerSpeed::SLOW) steadyUpSlewDbS = 0.5f;
+        else if (params.speed == LevelerSpeed::FAST) steadyUpSlewDbS = 1.5f;
+
+        float base = isFastLock ? FAST_LOCK_SLEW_DB_S : steadyUpSlewDbS;
         float rate = (m_targetGainDb < m_currentGainDb)
-            ? base * (isFastLock ? FAST_DOWN_MULTIPLIER : SLOW_DOWN_MULTIPLIER)
+            ? base * (isFastLock ? FAST_LOCK_DOWN_MULTIPLIER : STEADY_DOWN_MULTIPLIER)
             : base;
 
         float maxStep = rate * dtSeconds;

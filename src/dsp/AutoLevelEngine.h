@@ -23,7 +23,8 @@ struct EngineParameters {
     float targetLUFS = -14.0f;
     float maxBoostDb = 12.0f;
     float maxCutDb = 12.0f;
-    float levelResponse = 0.85f; // 0..1 slider, maps to memory half-life
+    float levelResponse = 0.85f; // 0..1 slider, maps to memory half-life (LoudnessMeter side)
+    LevelerSpeed slewSpeed = LevelerSpeed::NORMAL; // Steady-state gain slew rate (Leveler side)
     bool freezeBreakdowns = true;
     float breakdownThresholdLU = 7.0f;
     float toneSlopeDbPerOctave = -1.5f; // -3.0 to 0.0 dB/oct
@@ -57,6 +58,7 @@ struct EngineVisualState {
     float outputPeakDbR = -60.0f;
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
+    LevelerSpeed activeSlewSpeed = LevelerSpeed::NORMAL;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
     bool activeMbcAutoMakeup = true;
     float mbcAutoMakeupGainDb = 0.0f;
@@ -146,6 +148,7 @@ public:
         levelerParams.maxCutDb = params.maxCutDb;
         levelerParams.freezeBreakdowns = params.freezeBreakdowns;
         levelerParams.breakdownThresholdLU = params.breakdownThresholdLU;
+        levelerParams.speed = params.slewSpeed;
 
         float dtSeconds = static_cast<float>(numSamples) / static_cast<float>(m_sampleRate);
         m_leveler.update(levelerParams, readings, m_loudnessMeter.getBlocksIntegrated(), dtSeconds);
@@ -230,6 +233,7 @@ public:
         vs.outputPeakDbR = (m_outPeakLinR > 1e-4f) ? (20.0f * std::log10(m_outPeakLinR)) : -60.0f;
         vs.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         vs.activeProfile = params.targetProfile;
+        vs.activeSlewSpeed = params.slewSpeed;
         vs.activeMbcSpeed = params.mbcSpeed;
         vs.activeMbcAutoMakeup = params.mbcAutoMakeup;
         vs.mbcAutoMakeupGainDb = m_mbc.getAutoMakeupGainDb();

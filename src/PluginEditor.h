@@ -193,6 +193,14 @@ private:
     juce::Label m_ceilingLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_ceilingAttachment;
 
+    // AGC Slew Speed Switcher (Slow, Normal, Fast) - lives in Card 2 (AGC Gain Correction)
+    juce::ComboBox m_slewSpeedBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_slewSpeedAttachment;
+    juce::Label m_slewSpeedLabel;
+    juce::TextButton m_slewSlowBtn{"SLOW"};
+    juce::TextButton m_slewNormalBtn{"NORMAL"};
+    juce::TextButton m_slewFastBtn{"FAST"};
+
     juce::ToggleButton m_freezeBreakdownsButton;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> m_freezeAttachment;
 

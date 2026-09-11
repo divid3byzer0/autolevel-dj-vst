@@ -500,6 +500,30 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupRotary(m_postGainSlider, m_postGainLabel, "POST GAIN", " dB", juce::Colour(0xff00e5ff));
     setupRotary(m_hpfSlider, m_hpfLabel, "LOW CUT", " Hz", juce::Colour(0xffffb300));
 
+    // AGC Slew Speed Controls (Segmented header buttons, Card 2 - AGC Gain Correction)
+    m_slewSpeedBox.addItem("Slow", 1);
+    m_slewSpeedBox.addItem("Normal", 2);
+    m_slewSpeedBox.addItem("Fast", 3);
+    m_content.addChildComponent(m_slewSpeedBox);
+
+    m_slewSpeedLabel.setText("SLEW:", juce::dontSendNotification);
+    m_slewSpeedLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_slewSpeedLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_slewSpeedLabel.setJustificationType(juce::Justification::centredRight);
+    m_content.addAndMakeVisible(m_slewSpeedLabel);
+
+    auto setupSlewSpeedBtn = [this](juce::TextButton& btn, int index) {
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, index]() {
+            m_slewSpeedBox.setSelectedItemIndex(index, juce::sendNotificationSync);
+        };
+        m_content.addAndMakeVisible(btn);
+    };
+
+    setupSlewSpeedBtn(m_slewSlowBtn, 0);
+    setupSlewSpeedBtn(m_slewNormalBtn, 1);
+    setupSlewSpeedBtn(m_slewFastBtn, 2);
+
     // Breakdown freeze (located in Card 2 - AGC Gain Correction)
     m_freezeBreakdownsButton.setButtonText("Breakdown Freeze");
     m_freezeBreakdownsButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffffb300));
@@ -626,6 +650,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_COMPRESSION_AMOUNT, m_compressionSlider);
     m_levelResponseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_LEVEL_RESPONSE, m_levelResponseSlider);
+    m_slewSpeedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_SLEW_SPEED, m_slewSpeedBox);
     m_toneSlopeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_TONE_SLOPE, m_toneSlopeSlider);
     m_profileAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
@@ -699,6 +725,12 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_speedSlowBtn.setToggleState(speedIdx == 0, juce::dontSendNotification);
     m_speedNormalBtn.setToggleState(speedIdx == 1, juce::dontSendNotification);
     m_speedFastBtn.setToggleState(speedIdx == 2, juce::dontSendNotification);
+
+    // Sync AGC Slew Speed segmented buttons
+    int slewIdx = m_slewSpeedBox.getSelectedItemIndex();
+    m_slewSlowBtn.setToggleState(slewIdx == 0, juce::dontSendNotification);
+    m_slewNormalBtn.setToggleState(slewIdx == 1, juce::dontSendNotification);
+    m_slewFastBtn.setToggleState(slewIdx == 2, juce::dontSendNotification);
 
     // Sync Sub Weight segmented buttons
     int subWeightIdx = m_subWeightBox.getSelectedItemIndex();
@@ -1198,7 +1230,13 @@ void AutoLevelDJAudioProcessorEditor::layoutContent() {
     m_toneVisualizer.setBounds(530, 138, 280, 80);
 
     // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
-    m_freezeBreakdownsButton.setBounds(288, 180, 204, 28);
+    m_freezeBreakdownsButton.setBounds(288, 176, 204, 22);
+
+    // AGC Slew Speed segmented row, centered under the freeze button (Card 2 spans 270-510)
+    m_slewSpeedLabel.setBounds(306, 202, 40, 20);
+    m_slewSlowBtn.setBounds(349, 202, 38, 20);
+    m_slewNormalBtn.setBounds(390, 202, 44, 20);
+    m_slewFastBtn.setBounds(437, 202, 38, 20);
 
     // Dynamic Bass Lift Controls inside Card 4 header (x = 126 to 346)
     m_subWeightLabel.setBounds(126, 242, 34, 20);
