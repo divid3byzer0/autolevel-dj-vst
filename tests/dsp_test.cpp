@@ -403,6 +403,29 @@ void testDynamicAirLift() {
     std::cout << "  Dynamic Air Lift on bright track: +" << brightLiftDb << " dB" << std::endl;
     assert(brightLiftDb < 1.0f);
     std::cout << "  -> PASS: Adaptive sensor protects bright tracks from harshness." << std::endl;
+
+    // 4. Regression test for a real bug (2026-09-11): the mid anchor used to be a
+    // plain low-pass ("everything below 2kHz") instead of a 1-3kHz bandpass, so the
+    // denominator was always huge relative to any real track's air content and the
+    // lift barely varied with actual brightness. Case 3 above didn't catch it because
+    // its "bright" signal has MORE amplitude at 12kHz than at 2kHz - a ratio no real
+    // track has. This uses a realistic ratio instead (air always quieter than mid,
+    // like real cymbals/hats vs. a vocal or instrument fundamental) and asserts the
+    // lift actually tracks brightness rather than staying flat.
+    airLift.reset();
+    std::vector<float> moderateBrightL(n), moderateBrightR(n);
+    for (size_t i = 0; i < n; ++i) {
+        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
+        float moderateAir = 0.08f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
+        moderateBrightL[i] = mid + moderateAir;
+        moderateBrightR[i] = mid + moderateAir;
+    }
+    airLift.process(moderateBrightL.data(), moderateBrightR.data(), n, AirLiftMode::MED);
+    float moderateBrightLiftDb = airLift.getLiftDb();
+    std::cout << "  Dynamic Air Lift on realistic moderately-bright track: +" << moderateBrightLiftDb
+              << " dB (dark track was +" << airLiftDb << " dB)" << std::endl;
+    assert(airLiftDb - moderateBrightLiftDb > 0.3f);
+    std::cout << "  -> PASS: Lift actually discriminates brightness at realistic (non-extreme) ratios." << std::endl;
 }
 
 void testHighPassFilter() {

@@ -168,12 +168,28 @@ A pair of "Dolby Duo"-style dynamic shelving filters — pure linear EQ (RBJ coo
 high-shelf biquads, S=1 slope), with the *shelf gain itself* driven dynamically by a sidechain
 energy-ratio detector, rather than any nonlinear harmonic generation:
 
-- **Bass Lift**: compares sub-100Hz energy to a 500–2000Hz mid anchor. Bass-deficient material
-  (vintage/thin tracks) gets up to +2.5/+4.5/+6.5 dB of low-shelf boost (Low/Med/High mode);
-  already bass-heavy material is left alone (ratio-based deficit calculation clamps toward 0).
-- **Air Lift**: same idea at the top end (>6.5kHz vs. a 1–3kHz mid anchor), plus a dedicated
-  **sibilance auto-ducker** (1ms attack / 40ms release on a crest-factor detector) that pulls
-  the lift back when a transient (a harsh "S" or cymbal hit) would otherwise get boosted.
+- **Bass Lift**: compares sub-100Hz energy (`LP(100Hz)`) to a genuine ~100Hz-1kHz bandpass mid
+  anchor (`LP(1000Hz) - LP(100Hz)`). Bass-deficient material (vintage/thin tracks) gets up to
+  +2.5/+4.5/+6.5 dB of low-shelf boost (Low/Med/High mode); already bass-heavy material is left
+  alone (ratio-based deficit calculation clamps toward 0). Correctly discriminating but
+  conservative in practice: even a signal with *zero* content below 100Hz only reaches ~60% of
+  a mode's ceiling, because the single-pole 100Hz detector is fairly leaky and picks up real
+  bass-guitar/kick-body energy from the adjacent 100-250Hz range as "some bass present." Not
+  changed as of 2026-09-11 — flagged as a possible future candidate for a different approach
+  entirely (e.g. a harmonic-generator style enhancer) rather than retuning this one further.
+- **Air Lift**: same idea at the top end (>6.5kHz vs. a genuine ~1-3kHz bandpass mid anchor,
+  `LP(3000Hz) - LP(1000Hz)`), plus a dedicated **sibilance auto-ducker** (1ms attack / 40ms
+  release on a crest-factor detector) that pulls the lift back when a transient (a harsh "S" or
+  cymbal hit) would otherwise get boosted. **Bug fixed 2026-09-11**: the mid anchor used to be a
+  plain `LP(2000Hz)` with no subtraction — i.e. *everything below 2kHz* — which for any real
+  track vastly outweighs the air band above, so the lift read close to its ceiling almost
+  regardless of actual brightness (verified: dark/moderately-bright/very-bright synthetic
+  signals all measured 3.4-3.7 dB, essentially flat). Fixed to a real bandpass matching Bass
+  Lift's technique; re-verified on the same three signals: 3.40/1.73/0.00 dB — now properly
+  tracks brightness. See `testDynamicAirLift`'s 4th case (added in the same fix) for the
+  realistic-ratio regression test that would have caught this — the original "bright" test case
+  used a signal with *more* energy at 12kHz than at 2kHz, a ratio no real track has, extreme
+  enough to pass despite the bug.
 - Both report `getLiftDb()` for UI metering, and are fully bypassed (zero state touched, exact
   bit-identical passthrough) when their mode is `OFF` — verified in
   `testDynamicBassLift`/`testDynamicAirLift`.
@@ -439,3 +455,29 @@ guesses) found:
 
 All 18 tests in `tests/dsp_test.cpp` pass after these changes; a full JUCE CMake build (VST3/AU/
 Standalone) was re-verified clean after each round of changes.
+
+### 2026-09-11 (later) — Fixed DynamicAirLift's non-discriminating mid anchor
+
+Reported: Air Lift engages strongly on almost every track regardless of era/brightness, while
+Bass Lift feels barely perceptible even on genuinely bass-deficient material. Investigated by
+comparing both algorithms' actual code against their own doc comments, then verifying with
+synthetic test signals (not just the existing clean two-tone unit tests) closer to real program
+material.
+
+- **Bass Lift: not a bug.** Confirmed it correctly discriminates (0dB on a signal with real
+  sub-bass vs. positive lift on a genuinely deficient one) — just conservative, per §3.4. Left
+  unchanged; the project owner is considering a different approach entirely (e.g. a bass
+  harmonic generator) rather than retuning this one further.
+- **Air Lift: real bug, fixed.** Its mid anchor was `LP(2000Hz)` with no subtraction —
+  "everything below 2kHz" — instead of the documented 1-3kHz bandpass. Since real music's energy
+  is always dominated by content below 2kHz regardless of genre/era, the air/mid ratio was
+  always low and the lift always read near its ceiling. Verified on three synthetic signals
+  (dark / moderately bright / very bright): old code gave 3.41/3.67/3.51 dB (flat); fixed code
+  gives 3.40/1.73/0.00 dB (properly tracks brightness). Fixed to a real `LP(3000)-LP(1000)`
+  bandpass, matching Bass Lift's own (correct) technique. Added a 4th case to
+  `testDynamicAirLift` using a realistic amplitude ratio (air quieter than mid, unlike the
+  existing extreme "bright" case) that asserts the lift actually drops with brightness — verified
+  this new test fails against the old code (identical 4.13/4.13 dB) and passes against the fix.
+
+All 19 assertions across 18 test functions in `tests/dsp_test.cpp` pass; a full JUCE CMake build
+was re-verified clean.

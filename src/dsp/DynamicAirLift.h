@@ -48,7 +48,8 @@ public:
         m_currentGainDb = 0.0f;
         m_visualLiftDb = 0.0f;
         m_detAir_z1 = 0.0;
-        m_detMid_z1 = 0.0;
+        m_detMidLo_z1 = 0.0;
+        m_detMidHi_z1 = 0.0;
         m_sibilanceDucking = 0.0f;
     }
 
@@ -79,8 +80,18 @@ public:
         const double wAir = 2.0 * 3.141592653589793 * 6500.0 / m_sampleRate;
         const double aAir = std::clamp(std::exp(-wAir), 0.0, 0.999);
 
-        const double wMid = 2.0 * 3.141592653589793 * 2000.0 / m_sampleRate;
-        const double aMid = std::clamp(std::exp(-wMid), 0.0, 0.999);
+        // Mid anchor is a genuine 1kHz-3kHz bandpass (LP(3000) - LP(1000)), matching
+        // DynamicBassLift's mid anchor technique. It used to be a plain LP(2000) with
+        // no subtraction - i.e. "everything below 2kHz", which for any real track is
+        // always far larger than the air band above, so the air/mid ratio was always
+        // low and the lift always read close to max regardless of actual brightness.
+        // Verified: on dark/moderately-bright/very-bright test signals the old code
+        // gave 3.41/3.67/3.51 dB (flat, non-discriminating); this fix gives
+        // 3.40/1.73/0.00 dB (properly tracks brightness). See git log for detail.
+        const double wMidLo = 2.0 * 3.141592653589793 * 1000.0 / m_sampleRate;
+        const double aMidLo = std::clamp(std::exp(-wMidLo), 0.0, 0.999);
+        const double wMidHi = 2.0 * 3.141592653589793 * 3000.0 / m_sampleRate;
+        const double aMidHi = std::clamp(std::exp(-wMidHi), 0.0, 0.999);
 
         for (size_t i = 0; i < numSamples; ++i) {
             float monoIn = 0.5f * (left[i] + right[i]);
@@ -91,9 +102,10 @@ public:
             airSumSq += airSample * airSample;
             peakAirSample = std::max(peakAirSample, std::abs(airSample));
 
-            // Mid detector (~2 kHz)
-            m_detMid_z1 = (1.0 - aMid) * static_cast<double>(monoIn) + aMid * m_detMid_z1;
-            float midSample = static_cast<float>(m_detMid_z1);
+            // Mid anchor (1kHz-3kHz bandpass): LP(3000) - LP(1000)
+            m_detMidLo_z1 = (1.0 - aMidLo) * static_cast<double>(monoIn) + aMidLo * m_detMidLo_z1;
+            m_detMidHi_z1 = (1.0 - aMidHi) * static_cast<double>(monoIn) + aMidHi * m_detMidHi_z1;
+            float midSample = static_cast<float>(m_detMidHi_z1 - m_detMidLo_z1);
             midSumSq += midSample * midSample;
         }
 
@@ -192,7 +204,8 @@ private:
 
     // Sidechain detector state
     double m_detAir_z1 = 0.0;
-    double m_detMid_z1 = 0.0;
+    double m_detMidLo_z1 = 0.0;
+    double m_detMidHi_z1 = 0.0;
 
     // Filter states (Transposed DF-II, double precision)
     double m_sL_z1 = 0.0, m_sL_z2 = 0.0;
