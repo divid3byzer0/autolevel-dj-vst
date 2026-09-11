@@ -52,7 +52,6 @@ public:
     static constexpr const char* ID_TONE_SLOPE = "tone_slope";
     static constexpr const char* ID_TARGET_PROFILE = "target_profile";
     static constexpr const char* ID_MBC_SPEED = "mbc_speed";
-    static constexpr const char* ID_SUB_WEIGHT = "sub_weight";
     static constexpr const char* ID_AIR_EXCITER = "air_exciter";
     static constexpr const char* ID_POST_MBC_GAIN = "post_mbc_gain";
     static constexpr const char* ID_HPF_FREQ = "hpf_freq";
@@ -74,7 +73,6 @@ private:
     std::atomic<float>* m_toneSlopeParam = nullptr;
     std::atomic<float>* m_targetProfileParam = nullptr;
     std::atomic<float>* m_mbcSpeedParam = nullptr;
-    std::atomic<float>* m_subWeightParam = nullptr;
     std::atomic<float>* m_airExciterParam = nullptr;
     std::atomic<float>* m_postMbcGainParam = nullptr;
     std::atomic<float>* m_hpfFreqParam = nullptr;

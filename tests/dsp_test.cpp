@@ -297,60 +297,6 @@ void testPostMbcGain() {
         std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
 }
 
-void testDynamicBassLift() {
-    std::cout << "[TEST] DynamicBassLift (Dolby Duo low-end upward expansion & adaptive protection)..." << std::endl;
-    DynamicBassLift bassLift;
-    double sampleRate = 48000.0;
-    bassLift.prepare(sampleRate);
-
-    // 1. Test OFF bypass: signal must remain 100% bit-identical
-    size_t n = 4800; // 100ms
-    std::vector<float> origL(n), origR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float s = static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
-        origL[i] = s;
-        origR[i] = s;
-    }
-    std::vector<float> passL = origL;
-    std::vector<float> passR = origR;
-    bassLift.process(passL.data(), passR.data(), n, BassLiftMode::OFF);
-    for (size_t i = 0; i < n; ++i) {
-        assert(passL[i] == origL[i]);
-        assert(passR[i] == origR[i]);
-    }
-    std::cout << "  -> PASS: BassLiftMode::OFF is 100% bit-identical bypass." << std::endl;
-
-    // 2. Test dynamic low-shelf boost on a vintage track with weak bass (strong 1 kHz mid, weak 60 Hz bass)
-    bassLift.reset();
-    std::vector<float> vintageL(n), vintageR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
-        float weakBass = 0.05f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * i / sampleRate));
-        vintageL[i] = mid + weakBass;
-        vintageR[i] = mid + weakBass;
-    }
-    bassLift.process(vintageL.data(), vintageR.data(), n, BassLiftMode::MED);
-    float liftDb = bassLift.getLiftDb();
-    std::cout << "  Dynamic Bass Lift applied on vintage track: +" << liftDb << " dB" << std::endl;
-    assert(liftDb > 2.0f && liftDb <= 4.5f);
-    std::cout << "  -> PASS: Dynamic Bass Lift smoothly lifts weak low-end by up to +4.5 dB with zero distortion." << std::endl;
-
-    // 3. Test adaptive suppression: on modern track with heavy existing bass, lift must drop towards 0 dB
-    bassLift.reset();
-    std::vector<float> modernL(n), modernR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float mid = 0.2f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
-        float heavyBass = 0.6f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * i / sampleRate));
-        modernL[i] = mid + heavyBass;
-        modernR[i] = mid + heavyBass;
-    }
-    bassLift.process(modernL.data(), modernR.data(), n, BassLiftMode::MED);
-    float modernLiftDb = bassLift.getLiftDb();
-    std::cout << "  Dynamic Bass Lift on modern bass-heavy track: +" << modernLiftDb << " dB" << std::endl;
-    assert(modernLiftDb < 1.0f);
-    std::cout << "  -> PASS: Adaptive sensor prevents mud on modern bass-heavy material." << std::endl;
-}
-
 void testDynamicAirLift() {
     std::cout << "[TEST] DynamicAirLift (Dolby Duo high-end upward expansion & sibilance ducking)..." << std::endl;
     DynamicAirLift airLift;
@@ -816,7 +762,6 @@ int main() {
     testEbuR128DynamicLoudness();
     testMbcSpeedBallistics();
     testPostMbcGain();
-    testDynamicBassLift();
     testDynamicAirLift();
     testHighPassFilter();
     testDefaultLimiterCeiling();

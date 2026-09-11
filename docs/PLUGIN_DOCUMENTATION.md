@@ -50,25 +50,23 @@ Input (stereo float)
 [2] Leveler (AGC) — computes target gain from (targetLUFS - integratedLUFS), clamped to
   │     [-maxCutDb, +maxBoostDb], asymmetric slew-rate limited, with breakdown-freeze
   ▼
-[3] DynamicBassLift — dynamic low-shelf upward expansion (< 100 Hz), 0 added distortion
+[3] DynamicAirLift — dynamic high-shelf upward expansion (> 6.5 kHz) + sibilance ducking
   ▼
-[4] DynamicAirLift — dynamic high-shelf upward expansion (> 6.5 kHz) + sibilance ducking
-  ▼
-[5] MultibandCompressor (MBC) — 6-band Linkwitz-Riley crossover, per-band soft-knee
+[4] MultibandCompressor (MBC) — 6-band Linkwitz-Riley crossover, per-band soft-knee
   │     compression, phase-corrected recombination, adaptive auto-makeup gain
   ▼
-[6] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB
+[5] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB
   ▼
-[7] HighPassFilter — 4th-order (24 dB/oct) Butterworth low cut, 20–50 Hz
+[6] HighPassFilter — 4th-order (24 dB/oct) Butterworth low cut, 20–50 Hz
   ▼
-[8] SafetyLimiter — 1ms attack / 60ms release, 20:1 ratio, plus a hard sample clamp at the
+[7] SafetyLimiter — 1ms attack / 60ms release, 20:1 ratio, plus a hard sample clamp at the
   │     ceiling as a last-resort safety net
   ▼
 Output (stereo float) → also feeds a lock-free 3-buffer "visual state" the UI thread reads at 60Hz
 ```
 
-This exact order matters: Bass/Air Lift run *before* the MBC so the MBC can "polish" whatever
-they add; Post-Gain and the HPF both run *after* the MBC but *before* the limiter, so manual
+This exact order matters: Air Lift runs *before* the MBC so the MBC can "polish" whatever
+it adds; Post-Gain and the HPF both run *after* the MBC but *before* the limiter, so manual
 trim and subsonic cleanup are still caught by the final safety stage.
 
 ### Why the DSP core has no JUCE dependency
@@ -162,21 +160,23 @@ gain into a quiet breakdown right before a drop.
 The actual gain is applied to audio via `Leveler::processBlock()`, which linearly interpolates
 the *linear* gain across the block sample-by-sample (not a step change), avoiding zipper noise.
 
-### 3.4 DynamicBassLift / DynamicAirLift (`src/dsp/DynamicBassLift.h`, `DynamicAirLift.h`)
+### 3.4 DynamicAirLift (`src/dsp/DynamicAirLift.h`)
 
-A pair of "Dolby Duo"-style dynamic shelving filters — pure linear EQ (RBJ cookbook low-shelf /
-high-shelf biquads, S=1 slope), with the *shelf gain itself* driven dynamically by a sidechain
-energy-ratio detector, rather than any nonlinear harmonic generation:
+A "Dolby Duo"-style dynamic shelving filter — pure linear EQ (RBJ cookbook high-shelf biquad,
+S=1 slope), with the *shelf gain itself* driven dynamically by a sidechain energy-ratio
+detector, rather than any nonlinear harmonic generation.
 
-- **Bass Lift**: compares sub-100Hz energy (`LP(100Hz)`) to a genuine ~100Hz-1kHz bandpass mid
-  anchor (`LP(1000Hz) - LP(100Hz)`). Bass-deficient material (vintage/thin tracks) gets up to
-  +2.5/+4.5/+6.5 dB of low-shelf boost (Low/Med/High mode); already bass-heavy material is left
-  alone (ratio-based deficit calculation clamps toward 0). Correctly discriminating but
-  conservative in practice: even a signal with *zero* content below 100Hz only reaches ~60% of
-  a mode's ceiling, because the single-pole 100Hz detector is fairly leaky and picks up real
-  bass-guitar/kick-body energy from the adjacent 100-250Hz range as "some bass present." Not
-  changed as of 2026-09-11 — flagged as a possible future candidate for a different approach
-  entirely (e.g. a harmonic-generator style enhancer) rather than retuning this one further.
+**Bass Lift (`src/dsp/DynamicBassLift.h`) was removed entirely on 2026-09-11** — deleted
+outright, not just unwired, along with every reference across `AutoLevelEngine.h`,
+`PluginProcessor.h/.cpp` (the `sub_weight`/`ID_SUB_WEIGHT` parameter and `SubWeight` alias), and
+`PluginEditor.h/.cpp` (the "Sub Weight" combo box, its four segmented buttons, and the header
+LED activity meter in the Tone Shaper card). Ported straight from the same removal in
+`autolevel-box`, which went through several redesigns of Bass Lift on the same day (shelf EQ ->
+harmonic exciter -> sub-harmonic synthesizer) before the project owner asked to drop the
+adaptive-detector approach entirely; the box replaced it with a manual Pre-MBC EQ, but that
+addition was explicitly **not** ported here — this plugin just lost Bass Lift, nothing replaces
+it. Air Lift itself was untouched by this removal; it's covered in full below.
+
 - **Air Lift**: same idea at the top end (>6.5kHz vs. a genuine ~1-3kHz bandpass mid anchor,
   `LP(3000Hz) - LP(1000Hz)`), plus a dedicated **sibilance auto-ducker** (1ms attack / 40ms
   release on a crest-factor detector) that pulls the lift back when a transient (a harsh "S" or
@@ -190,17 +190,16 @@ energy-ratio detector, rather than any nonlinear harmonic generation:
   realistic-ratio regression test that would have caught this — the original "bright" test case
   used a signal with *more* energy at 12kHz than at 2kHz, a ratio no real track has, extreme
   enough to pass despite the bug.
-- Both report `getLiftDb()` for UI metering, and are fully bypassed (zero state touched, exact
-  bit-identical passthrough) when their mode is `OFF` — verified in
-  `testDynamicBassLift`/`testDynamicAirLift`.
-- Backward-compatibility note: `EngineParameters` has *both* a newer `bassLift`/`airLift` field
-  and an older `subWeight`/`airWeight` field (type-aliased to the same enums). The engine uses
-  whichever is non-OFF, preferring the new field
-  (`AutoLevelEngine.h`: `effBass = (params.bassLift != OFF) ? params.bassLift : params.subWeight`).
-  **`PluginProcessor.cpp` only ever sets `subWeight`/`airWeight`** (from the "Sub Weight"/"Air
-  Exciter" combo boxes) — `bassLift`/`airLift` are effectively dead fields in the shipped
-  plugin, kept for any code/tests that construct `EngineParameters` directly with the newer
-  names.
+- Reports `getLiftDb()` for UI metering, and is fully bypassed (zero state touched, exact
+  bit-identical passthrough) when its mode is `OFF` — verified in `testDynamicAirLift`.
+- Backward-compatibility note: `EngineParameters` has *both* a newer `airLift` field and an
+  older `airWeight` field (type-aliased to the same enum, `AirWeight = AirLiftMode`). The
+  engine uses whichever is non-OFF, preferring the new field
+  (`AutoLevelEngine.h`: `effAir = (params.airLift != OFF) ? params.airLift : params.airWeight`).
+  **`PluginProcessor.cpp` only ever sets `airWeight`** (from the "Air Exciter" combo box) —
+  `airLift` is effectively a dead field in the shipped plugin, kept for any code/tests that
+  construct `EngineParameters` directly with the newer name. The equivalent `bassLift`/
+  `subWeight` pair was removed along with Bass Lift itself.
 
 ### 3.5 MultibandCompressor / MBC (`src/dsp/MultibandCompressor.h`, `Bands.h`, `Biquad.h`)
 
@@ -329,7 +328,6 @@ state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
 | `tone_slope` | Tone Slope ("Tone Tilt") | Float | −3.0 to 0.0 dB/oct (0.1 step) | −1.5 dB/oct | `MultibandCompressor` threshold tilt |
 | `target_profile` | Target Profile | Choice | Pink Noise (Linear) / Modern Mix (Contoured) | Modern Mix | `MultibandCompressor` threshold contour. Note: `TargetProfile::CUSTOM` exists in the DSP enum but has no 3rd UI choice — unreachable from the plugin |
 | `mbc_speed` | MBC Speed | Choice | Slow / Normal / Fast | Normal | `MultibandCompressor` attack/release ballistics (§3.5) |
-| `sub_weight` | Bass (Dynamic Bass Lift) | Choice | Off / Low / Medium / High | Off | `DynamicBassLift` mode |
 | `air_exciter` | Air (Dynamic Air Lift) | Choice | Off / Low / Medium / High | Off | `DynamicAirLift` mode |
 | `post_mbc_gain` | Post Gain | Float | −12 to +12 dB (0.1 step) | 0 dB | Post-MBC manual trim |
 | `hpf_freq` | Low Cut | Float | 20 to 50 Hz (0.5 step) | 30 Hz | `HighPassFilter` cutoff (always enabled, see §3.7) |
@@ -391,8 +389,8 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ## 7. Known unreachable/dead code (intentionally left in place)
 
 - `TargetProfile::CUSTOM` (§5) — UI can't select it.
-- `EngineParameters::bassLift` / `airLift` fields (§3.4) — `PluginProcessor.cpp` only ever sets
-  the older `subWeight`/`airWeight` aliases.
+- `EngineParameters::airLift` field (§3.4) — `PluginProcessor.cpp` only ever sets the older
+  `airWeight` alias.
 - `LoudnessMeter::m_blockSamples`, `m_gatedMs` — computed/incremented, never read.
 - Several struct-level defaults that are always overwritten by a caller before use, kept only
   so directly-constructed instances (e.g. in tests) have a sane value:
@@ -465,9 +463,9 @@ synthetic test signals (not just the existing clean two-tone unit tests) closer 
 material.
 
 - **Bass Lift: not a bug.** Confirmed it correctly discriminates (0dB on a signal with real
-  sub-bass vs. positive lift on a genuinely deficient one) — just conservative, per §3.4. Left
-  unchanged; the project owner is considering a different approach entirely (e.g. a bass
-  harmonic generator) rather than retuning this one further.
+  sub-bass vs. positive lift on a genuinely deficient one) — just conservative. Left unchanged
+  at the time; Bass Lift was later removed entirely (see the 2026-09-11 entry near the end of
+  this changelog), so this describes behavior that no longer exists in the codebase.
 - **Air Lift: real bug, fixed.** Its mid anchor was `LP(2000Hz)` with no subtraction —
   "everything below 2kHz" — instead of the documented 1-3kHz bandpass. Since real music's energy
   is always dominated by content below 2kHz regardless of genre/era, the air/mid ratio was
@@ -481,3 +479,35 @@ material.
 
 All 19 assertions across 18 test functions in `tests/dsp_test.cpp` pass; a full JUCE CMake build
 was re-verified clean.
+
+### 2026-09-11 (later still) — Removed Bass Lift entirely
+
+`autolevel-box` (this plugin's sibling, sharing the same `src/dsp/` core) went through several
+same-day redesigns of its own Bass Lift — shelf EQ, then a harmonic exciter, then a sub-harmonic
+synthesizer — before the project owner asked to drop the adaptive-detector approach entirely and
+replace it with a plain manual 6-band EQ ahead of the MBC. The project owner then asked to port
+that same change here, then reconsidered mid-port and asked for **only** the removal, not the
+new EQ: "don't port the eq to the vst, just remove the sub lift."
+
+Deleted `src/dsp/DynamicBassLift.h` outright (not just unwired) and removed every reference:
+`AutoLevelEngine.h` (`#include`, the `bassLift`/`subWeight` params and their `SubWeight` type
+alias, the `activeBassLift`/`bassLiftDb`/`activeSubWeight`/`subInjectedLevel` visual-state
+fields, the `m_bassLift` member and its `prepare()`/`process()`/`doReset()` calls, the Stage 1.5
+comment), `PluginProcessor.h/.cpp` (`ID_SUB_WEIGHT`, `m_subWeightParam`, the "Sub Weight"
+`AudioParameterChoice`, its `processBlock()` mapping), and `PluginEditor.h/.cpp` (the
+`m_subWeightBox`/label/four buttons/attachment, the `MultibandMeterRack`'s `subWeight` parameter
+and "SUB +" band-name highlight logic, the header's real-time Bass Lift activity LED meter in
+the Tone Shaper card, and the `timerCallback()` sync for those buttons). `DynamicAirLift.h` and
+everything around Air Lift were not touched - confirmed by a repo-wide grep before and after,
+which turned up only one pre-existing historical comment in `DynamicAirLift.h`'s own doc comment
+that references `DynamicBassLift`'s technique, deliberately left alone.
+
+Nothing replaces Bass Lift here - no new EQ, no new control. The plugin's window layout is
+unchanged (removing the "Bass" segmented buttons and LED meter just left the same blank header
+space in the Tone Shaper card that Air Lift's own controls already had room around).
+
+All 18 test functions in `tests/dsp_test.cpp` pass (down from 19 assertions across 18 functions
+- `testDynamicBassLift` removed, nothing added in its place, matching the "just remove" scope);
+full JUCE CMake build verified clean; the Standalone app was launched and screenshotted to
+confirm the Tone Shaper header now shows only "AIR:" and "SPEED:" controls with no layout
+artifacts where "BASS:" used to be.

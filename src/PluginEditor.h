@@ -61,7 +61,6 @@ public:
 
     void updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
                       autolevel::dsp::TargetProfile profile,
-                      autolevel::dsp::SubWeight subWeight,
                       autolevel::dsp::AirWeight airWeight);
 
     void paint(juce::Graphics& g) override;
@@ -71,7 +70,6 @@ private:
     std::array<float, autolevel::dsp::Bands::COUNT> m_peakGr{};
     std::array<int, autolevel::dsp::Bands::COUNT> m_peakHoldTimers{};
     autolevel::dsp::TargetProfile m_profile = autolevel::dsp::TargetProfile::MODERN_MIX;
-    autolevel::dsp::SubWeight m_subWeight = autolevel::dsp::SubWeight::OFF;
     autolevel::dsp::AirWeight m_airWeight = autolevel::dsp::AirWeight::OFF;
 };
 
@@ -152,15 +150,6 @@ private:
     juce::TextButton m_speedSlowBtn{"SLOW"};
     juce::TextButton m_speedNormalBtn{"NORMAL"};
     juce::TextButton m_speedFastBtn{"FAST"};
-
-    // Dynamic Bass Lift Switcher (Off, Low, Med, High)
-    juce::ComboBox m_subWeightBox; // APVTS bound
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_subWeightAttachment;
-    juce::Label m_subWeightLabel;
-    juce::TextButton m_subWeightOffBtn{"OFF"};
-    juce::TextButton m_subWeightLowBtn{"LOW"};
-    juce::TextButton m_subWeightMedBtn{"MED"};
-    juce::TextButton m_subWeightHighBtn{"HIGH"};
 
     // Dynamic Air Lift Switcher (Off, Low, Med, High)
     juce::ComboBox m_airExciterBox; // APVTS bound

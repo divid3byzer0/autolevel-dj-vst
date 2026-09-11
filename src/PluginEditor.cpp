@@ -336,11 +336,9 @@ MultibandMeterRack::MultibandMeterRack() {
 
 void MultibandMeterRack::updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
                                       autolevel::dsp::TargetProfile profile,
-                                      autolevel::dsp::SubWeight subWeight,
                                       autolevel::dsp::AirWeight airWeight)
 {
     m_profile = profile;
-    m_subWeight = subWeight;
     m_airWeight = airWeight;
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float gr = gainReductions[b]; // Negative dB (0 to -12)
@@ -398,12 +396,11 @@ void MultibandMeterRack::paint(juce::Graphics& g)
         float barW = std::min(colW - 8.0f, 34.0f);
         float barX = bx + (colW - barW) * 0.5f;
 
-        // Band Name at top (glows cyan with '+' indicator if Sub Weight or Air Exciter is active)
-        bool isSubWithWeight = (b == 0 && m_subWeight != autolevel::dsp::SubWeight::OFF);
+        // Band Name at top (glows cyan with '+' indicator if Air Exciter is active)
         bool isAirWithSheen = (b == 5 && m_airWeight != autolevel::dsp::AirWeight::OFF);
-        g.setColour((isSubWithWeight || isAirWithSheen) ? juce::Colour(0xff00e5ff) : juce::Colour(0xffd0d7e2));
+        g.setColour(isAirWithSheen ? juce::Colour(0xff00e5ff) : juce::Colour(0xffd0d7e2));
         g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        juce::String name = isSubWithWeight ? "SUB +" : (isAirWithSheen ? "AIR +" : juce::String(bandNames[static_cast<size_t>(b)].data()));
+        juce::String name = isAirWithSheen ? "AIR +" : juce::String(bandNames[static_cast<size_t>(b)].data());
         g.drawText(name, static_cast<int>(bx), static_cast<int>(bounds.getY() + 5), static_cast<int>(colW), 16, juce::Justification::centred);
 
         // Meter Trough
@@ -590,32 +587,6 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupSpeedBtn(m_speedNormalBtn, 1);
     setupSpeedBtn(m_speedFastBtn, 2);
 
-    // Dynamic Bass Lift Controls (Segmented header buttons in Card 4)
-    m_subWeightBox.addItem("Off", 1);
-    m_subWeightBox.addItem("Low", 2);
-    m_subWeightBox.addItem("Medium", 3);
-    m_subWeightBox.addItem("High", 4);
-    m_content.addChildComponent(m_subWeightBox);
-
-    m_subWeightLabel.setText("BASS:", juce::dontSendNotification);
-    m_subWeightLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    m_subWeightLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
-    m_subWeightLabel.setJustificationType(juce::Justification::centredRight);
-    m_content.addAndMakeVisible(m_subWeightLabel);
-
-    auto setupSubWeightBtn = [this](juce::TextButton& btn, int index) {
-        btn.setClickingTogglesState(false);
-        btn.onClick = [this, index]() {
-            m_subWeightBox.setSelectedItemIndex(index, juce::sendNotificationSync);
-        };
-        m_content.addAndMakeVisible(btn);
-    };
-
-    setupSubWeightBtn(m_subWeightOffBtn, 0);
-    setupSubWeightBtn(m_subWeightLowBtn, 1);
-    setupSubWeightBtn(m_subWeightMedBtn, 2);
-    setupSubWeightBtn(m_subWeightHighBtn, 3);
-
     // Dynamic Air Lift Controls (Segmented header buttons in Card 4)
     m_airExciterBox.addItem("Off", 1);
     m_airExciterBox.addItem("Low", 2);
@@ -658,8 +629,6 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_TARGET_PROFILE, m_profileBox);
     m_mbcSpeedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_MBC_SPEED, m_mbcSpeedBox);
-    m_subWeightAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_SUB_WEIGHT, m_subWeightBox);
     m_airExciterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_AIR_EXCITER, m_airExciterBox);
     m_maxBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -732,13 +701,6 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_slewNormalBtn.setToggleState(slewIdx == 1, juce::dontSendNotification);
     m_slewFastBtn.setToggleState(slewIdx == 2, juce::dontSendNotification);
 
-    // Sync Sub Weight segmented buttons
-    int subWeightIdx = m_subWeightBox.getSelectedItemIndex();
-    m_subWeightOffBtn.setToggleState(subWeightIdx == 0, juce::dontSendNotification);
-    m_subWeightLowBtn.setToggleState(subWeightIdx == 1, juce::dontSendNotification);
-    m_subWeightMedBtn.setToggleState(subWeightIdx == 2, juce::dontSendNotification);
-    m_subWeightHighBtn.setToggleState(subWeightIdx == 3, juce::dontSendNotification);
-
     // Sync Air Exciter segmented buttons
     int airIdx = m_airExciterBox.getSelectedItemIndex();
     m_airExciterOffBtn.setToggleState(airIdx == 0, juce::dontSendNotification);
@@ -754,7 +716,7 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
 
     // Update Visualizers
     m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
-    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeSubWeight, m_latestState.activeAirWeight);
+    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile, m_latestState.activeAirWeight);
 
     m_content.repaint();
 }
@@ -905,50 +867,7 @@ void AutoLevelDJAudioProcessorEditor::paintContent(juce::Graphics& g) {
     juce::Rectangle<int> mbcCard(20, 236, 800, 158);
     drawCard(mbcCard, "TONE SHAPER");
 
-    // 1. Real-time Dynamic Bass Lift Activity Meter in Card 4 header
-    float subMeterX = 308.0f;
-    float subMeterY = 244.0f;
-    float subMeterW = 46.0f;
-    float subMeterH = 16.0f;
-
-    juce::Rectangle<float> subTrough(subMeterX, subMeterY, subMeterW, subMeterH);
-    g.setColour(juce::Colour(0xff0a0d13));
-    g.fillRoundedRectangle(subTrough, 3.0f);
-    g.setColour(juce::Colour(0xff1e2634));
-    g.drawRoundedRectangle(subTrough, 3.0f, 1.0f);
-
-    bool isSubActive = (m_latestState.activeSubWeight != autolevel::dsp::SubWeight::OFF);
-    if (!isSubActive) {
-        g.setColour(juce::Colour(0xff454f5e));
-        g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-        g.drawText("OFF", subTrough, juce::Justification::centred);
-    } else {
-        constexpr int NUM_LEDS = 4;
-        float normLevel = std::clamp(m_latestState.bassLiftDb / 6.5f, 0.0f, 1.0f);
-        int activeLeds = static_cast<int>(std::round(normLevel * static_cast<float>(NUM_LEDS)));
-
-        float ledW = 8.0f;
-        float ledH = 10.0f;
-        float ledY = subMeterY + 3.0f;
-        float startLedX = subMeterX + 4.0f;
-
-        for (int i = 0; i < NUM_LEDS; ++i) {
-            float lx = startLedX + static_cast<float>(i) * (ledW + 2.0f);
-            juce::Rectangle<float> ledRect(lx, ledY, ledW, ledH);
-
-            if (i < activeLeds) {
-                juce::Colour col = (i < 2) ? juce::Colour(0xff00e5ff) :
-                                   (i < 3) ? juce::Colour(0xff00e676) : juce::Colour(0xffffb300);
-                g.setColour(col);
-                g.fillRoundedRectangle(ledRect, 1.5f);
-            } else {
-                g.setColour(juce::Colour(0xff141a24));
-                g.fillRoundedRectangle(ledRect, 1.5f);
-            }
-        }
-    }
-
-    // 2. Real-time Dynamic Air Lift Activity Meter in Card 4 header
+    // Real-time Dynamic Air Lift Activity Meter in Card 4 header
     float airMeterX = 530.0f;
     float airMeterY = 244.0f;
     float airMeterW = 46.0f;
@@ -1237,13 +1156,6 @@ void AutoLevelDJAudioProcessorEditor::layoutContent() {
     m_slewSlowBtn.setBounds(349, 202, 38, 20);
     m_slewNormalBtn.setBounds(390, 202, 44, 20);
     m_slewFastBtn.setBounds(437, 202, 38, 20);
-
-    // Dynamic Bass Lift Controls inside Card 4 header (x = 126 to 346)
-    m_subWeightLabel.setBounds(126, 242, 34, 20);
-    m_subWeightOffBtn.setBounds(162, 242, 32, 20);
-    m_subWeightLowBtn.setBounds(196, 242, 32, 20);
-    m_subWeightMedBtn.setBounds(230, 242, 32, 20);
-    m_subWeightHighBtn.setBounds(264, 242, 36, 20);
 
     // Dynamic Air Lift Controls inside Card 4 header (x = 358 to 576)
     m_airExciterLabel.setBounds(358, 242, 28, 20);

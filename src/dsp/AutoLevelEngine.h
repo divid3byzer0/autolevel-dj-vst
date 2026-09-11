@@ -2,7 +2,6 @@
 
 #include "LoudnessMeter.h"
 #include "Leveler.h"
-#include "DynamicBassLift.h"
 #include "DynamicAirLift.h"
 #include "HighPassFilter.h"
 #include "MultibandCompressor.h"
@@ -15,8 +14,7 @@
 
 namespace autolevel::dsp {
 
-// Backward-compatible type aliases for existing codebase & tests
-using SubWeight = BassLiftMode;
+// Backward-compatible type alias for existing codebase & tests
 using AirWeight = AirLiftMode;
 
 struct EngineParameters {
@@ -32,10 +30,8 @@ struct EngineParameters {
     std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
     bool mbcAutoMakeup = true;
-    BassLiftMode bassLift = BassLiftMode::OFF;
     AirLiftMode airLift = AirLiftMode::OFF;
-    // Backward compatibility aliases
-    SubWeight subWeight = SubWeight::OFF;
+    // Backward compatibility alias
     AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
@@ -62,13 +58,9 @@ struct EngineVisualState {
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
     bool activeMbcAutoMakeup = true;
     float mbcAutoMakeupGainDb = 0.0f;
-    BassLiftMode activeBassLift = BassLiftMode::OFF;
-    float bassLiftDb = 0.0f;
     AirLiftMode activeAirLift = AirLiftMode::OFF;
     float airLiftDb = 0.0f;
-    // Compatibility fields for UI meters
-    SubWeight activeSubWeight = SubWeight::OFF;
-    float subInjectedLevel = 0.0f;
+    // Compatibility field for UI meters
     AirWeight activeAirWeight = AirWeight::OFF;
     float airInjectedLevel = 0.0f;
     float activeToneSlope = -2.0f;
@@ -85,7 +77,6 @@ public:
         m_sampleRate = sampleRate;
         m_loudnessMeter.prepare(sampleRate);
         m_leveler.prepare(sampleRate);
-        m_bassLift.prepare(sampleRate);
         m_airLift.prepare(sampleRate);
         m_mbc.prepare(sampleRate);
         m_hpf.prepare(sampleRate);
@@ -112,7 +103,7 @@ public:
     }
 
     /**
-     * Exact chain: AGC -> Bass Lift -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
+     * Exact chain: AGC -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         // Serviced before the bypass early-out so a reset requested while bypassed
@@ -156,11 +147,7 @@ public:
         // 3. Stage 1: AGC Makeup Gain applied to audio
         m_leveler.processBlock(left, right, numSamples);
 
-        // 3.5. Stage 1.5: Dynamic Bass Lift (< 100 Hz, 100% distortion-free)
-        BassLiftMode effBass = (params.bassLift != BassLiftMode::OFF) ? params.bassLift : params.subWeight;
-        m_bassLift.process(left, right, numSamples, effBass);
-
-        // 3.6. Stage 1.6: Dynamic Air Lift (> 9.5 kHz, 100% distortion-free)
+        // 3.5. Stage 1.5: Dynamic Air Lift (> 9.5 kHz, 100% distortion-free)
         AirLiftMode effAir = (params.airLift != AirLiftMode::OFF) ? params.airLift : params.airWeight;
         m_airLift.process(left, right, numSamples, effAir);
 
@@ -237,13 +224,9 @@ public:
         vs.activeMbcSpeed = params.mbcSpeed;
         vs.activeMbcAutoMakeup = params.mbcAutoMakeup;
         vs.mbcAutoMakeupGainDb = m_mbc.getAutoMakeupGainDb();
-        vs.activeBassLift = effBass;
-        vs.bassLiftDb = m_bassLift.getLiftDb();
         vs.activeAirLift = effAir;
         vs.airLiftDb = m_airLift.getLiftDb();
         // UI compatibility
-        vs.activeSubWeight = effBass;
-        vs.subInjectedLevel = m_bassLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
         vs.activeAirWeight = effAir;
         vs.airInjectedLevel = m_airLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
         vs.activeToneSlope = params.toneSlopeDbPerOctave;
@@ -265,7 +248,6 @@ private:
     void doReset() {
         m_loudnessMeter.reset();
         m_leveler.reset();
-        m_bassLift.reset();
         m_airLift.reset();
         m_mbc.reset();
         m_hpf.reset();
@@ -278,7 +260,6 @@ private:
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
-    DynamicBassLift m_bassLift;
     DynamicAirLift m_airLift;
     MultibandCompressor m_mbc;
     HighPassFilter m_hpf;
