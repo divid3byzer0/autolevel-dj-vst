@@ -337,6 +337,34 @@ state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
 
 ---
 
+### 3.3.1 Seed gain (`Leveler::seedGain`, `AutoLevelEngine::seedGain`)
+
+Added 2026-09-18. Preloads the leveller's gain from an **external** estimate of how loud the
+source is, so the correction starts at the right value instead of slewing to it over the first
+several seconds of a track.
+
+The plugin does not call this — a DJ mixer's master bus has no metadata to seed from. It exists
+for hosts that know a track's loudness *before* playing it: the AutoLevel Android player uses a
+Subsonic `replayGain.trackGain` tag, converting it with `trackLufs = -18.0 - trackGain`
+(ReplayGain 2.0 references −18 LUFS) and seeding `targetLUFS - trackLufs`.
+
+Behaviour:
+
+- Sets current gain, target gain **and** the smoothed linear gain, so there is no ramp from
+  unity. That is why it must only be called at a boundary with no audio flowing; mid-stream it
+  would be an audible step. `AutoLevelEngine::seedGain` defers it to the audio thread for the
+  same reason `reset()` is deferred, and applies it *after* a pending reset so a seed requested
+  alongside one survives.
+- Leaves the fast-lock timer at zero. Nothing has been measured yet, so the leveller should
+  still be free to move quickly once it has been.
+- Clamped to ±24 dB (`Leveler::SEED_LIMIT_DB`), independent of Max Boost / Max Cut. Those are
+  parameters and are applied by `update()` once a measurement exists; the hard bound only stops
+  a nonsensical tag blasting the output before then.
+- **Is not authoritative.** The next `update()` recomputes the target from what is actually
+  heard, so a wrong seed costs a brief settle rather than being trusted for the whole track.
+  There is a test feeding a loud signal after a +12 dB seed and asserting the gain ends up
+  negative.
+
 ## 5. Things that exist in the DSP layer but aren't exposed as parameters
 
 These are implemented and unit-tested in `src/dsp/`, but `PluginProcessor.cpp` never sets them
@@ -403,6 +431,18 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ---
 
 ## 8. Changelog
+
+### 2026-09-18 — Seed gain
+
+Added `Leveler::seedGain(float db)` and `AutoLevelEngine::seedGain(float db)` so a host that
+already knows a track's loudness can start the correction at the right value rather than
+converging to it. See §3.3.1. No change to any existing behaviour or parameter: the plugin does
+not call it, and an engine that never seeds behaves exactly as before. Six assertions added to
+`tests/dsp_test.cpp` (`testSeedGain`) covering application, the advantage over converging from
+zero, the measurement overriding a wrong seed, the hard clamp, and output safety.
+
+Motivated by the AutoLevel Android player (`autolevel-player`), which consumes this DSP core as
+a submodule and has ReplayGain tags for every track in its library.
 
 Entries below cover changes made *outside* of normal feature commits (the git log is
 authoritative for feature history) — specifically, bug-hunt findings and their fixes, and

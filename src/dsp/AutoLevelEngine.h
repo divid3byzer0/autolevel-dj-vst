@@ -103,6 +103,22 @@ public:
     }
 
     /**
+     * Preload the leveller's gain from an external loudness estimate.
+     *
+     * Lets a host that already knows how loud a track is -- from a ReplayGain tag, say --
+     * start the correction at the right value instead of converging to it over the first
+     * several seconds. The measurement still wins: the next update() recomputes from what is
+     * actually heard, so a wrong estimate costs a brief settling rather than being trusted.
+     *
+     * Deferred to the audio thread, like reset(), because it snaps the smoothed gain and
+     * touching that from the caller's thread would race the callback.
+     */
+    void seedGain(float db) {
+        m_seedGainDb.store(db, std::memory_order_relaxed);
+        m_seedRequested.store(true, std::memory_order_release);
+    }
+
+    /**
      * Exact chain: AGC -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
      */
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
@@ -110,6 +126,12 @@ public:
         // is not left pending indefinitely.
         if (m_resetRequested.exchange(false, std::memory_order_acquire)) {
             doReset();
+        }
+
+        // After the reset, never before: a reset and a seed requested together must leave the
+        // seed standing, since the seed is the more specific instruction.
+        if (m_seedRequested.exchange(false, std::memory_order_acquire)) {
+            m_leveler.seedGain(m_seedGainDb.load(std::memory_order_relaxed));
         }
 
         if (params.bypass || numSamples == 0) {
@@ -257,6 +279,8 @@ private:
     }
 
     std::atomic<bool> m_resetRequested{false};
+    std::atomic<bool> m_seedRequested{false};
+    std::atomic<float> m_seedGainDb{0.0f};
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;

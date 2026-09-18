@@ -750,6 +750,113 @@ void testLockFreeDoubleBufferedVisualState() {
     std::cout << "  -> PASS: 3-buffered visual state and lock-free reset verified!" << std::endl;
 }
 
+
+void testSeedGain() {
+    std::cout << "[TEST] Seed Gain from external loudness estimate..." << std::endl;
+
+    constexpr size_t N = 256;
+    EngineParameters params;
+    params.targetLUFS = -14.0f;
+    params.compressionAmount = 0.0f;   // isolate the leveller
+    params.hpfEnabled = false;
+
+    // A seed is applied on the audio thread, so it takes effect from the first block after
+    // the request -- not before, and not silently never.
+    {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        engine.seedGain(-6.0f);
+
+        std::vector<float> left(N, 0.05f), right(N, 0.05f);
+        engine.process(left.data(), right.data(), N, params);
+
+        auto vs = engine.getVisualState();
+        assert(std::abs(vs.appliedGainDb - (-6.0f)) < 0.01f);
+    }
+
+    // Seeding starts the correction where it belongs instead of at zero. Feed a -21 dBFS tone
+    // (about -21 LUFS at 1 kHz) and seed the +7 dB it needs: the gain is right immediately,
+    // where an unseeded engine has to slew there over seconds.
+    {
+        AutoLevelEngine seeded, unseeded;
+        seeded.prepare(48000.0);
+        unseeded.prepare(48000.0);
+        seeded.seedGain(7.0f);
+
+        std::vector<float> l(N), r(N);
+        double phase = 0.0;
+        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const float amp = std::pow(10.0f, -21.0f / 20.0f);
+
+        // One second only: far short of what convergence from zero would need.
+        for (int block = 0; block < static_cast<int>(48000 / N); ++block) {
+            for (size_t i = 0; i < N; ++i) {
+                const float sample = amp * static_cast<float>(std::sin(phase));
+                phase += inc;
+                l[i] = sample; r[i] = sample;
+            }
+            std::vector<float> l2 = l, r2 = r;
+            seeded.process(l.data(), r.data(), N, params);
+            unseeded.process(l2.data(), r2.data(), N, params);
+        }
+
+        const float seededGain = seeded.getVisualState().appliedGainDb;
+        const float unseededGain = unseeded.getVisualState().appliedGainDb;
+        assert(seededGain > 6.0f);
+        assert(unseededGain < seededGain - 1.0f);
+    }
+
+    // A wrong seed must not be believed forever: the measurement pulls it back.
+    {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        engine.seedGain(12.0f);           // claim it is very quiet
+
+        std::vector<float> l(N), r(N);
+        double phase = 0.0;
+        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const float amp = std::pow(10.0f, -6.0f / 20.0f);   // actually loud
+
+        for (int block = 0; block < static_cast<int>(48000 * 20 / N); ++block) {
+            for (size_t i = 0; i < N; ++i) {
+                const float sample = amp * static_cast<float>(std::sin(phase));
+                phase += inc;
+                l[i] = sample; r[i] = sample;
+            }
+            engine.process(l.data(), r.data(), N, params);
+        }
+        const float gain = engine.getVisualState().appliedGainDb;
+        assert(gain < 0.0f);              // corrected downward, seed abandoned
+    }
+
+    // Hard-bounded so a nonsensical tag cannot blast the output before measurement arrives.
+    {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        engine.seedGain(500.0f);
+        std::vector<float> left(N, 0.01f), right(N, 0.01f);
+        engine.process(left.data(), right.data(), N, params);
+        const float gain = engine.getVisualState().appliedGainDb;
+        assert(gain <= 24.0f);
+        assert(std::isfinite(gain));
+    }
+
+    // Output stays finite and bounded when a seed lands on a hot signal.
+    {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        engine.seedGain(18.0f);
+        std::vector<float> left(N, 0.9f), right(N, 0.9f);
+        engine.process(left.data(), right.data(), N, params);
+        for (size_t i = 0; i < N; ++i) {
+            assert(std::isfinite(left[i]));
+            assert(std::abs(left[i]) <= 1.0f);   // the limiter is downstream of the seed
+        }
+    }
+
+    std::cout << "  -> PASS: seed applied, overridden by measurement, clamped, and safe!" << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -772,6 +879,7 @@ int main() {
     testFullChain();
     testInputSanitizerAntiNan();
     testLockFreeDoubleBufferedVisualState();
+    testSeedGain();
 
     std::cout << "============================================" << std::endl;
     std::cout << "   ALL DSP TESTS PASSED WITH 100% ACCURACY! " << std::endl;

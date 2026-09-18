@@ -54,6 +54,31 @@ public:
         m_isFrozen = false;
     }
 
+    /**
+     * Preload the gain from an external estimate of the source's loudness, so the correction
+     * starts right instead of converging from zero.
+     *
+     * Intended for a host that knows a track's loudness before playing it -- a ReplayGain tag,
+     * a prior analysis pass. The measurement still takes over: the next update() recomputes the
+     * target from what is actually heard and re-clamps against maxBoost/maxCut, so a wrong seed
+     * costs a few seconds of correction rather than being believed forever.
+     *
+     * Must be called at a boundary where no audio is flowing (a track change), because it snaps
+     * the smoothed gain rather than ramping it -- mid-stream that would be an audible step. The
+     * engine defers it to the audio thread for exactly this reason.
+     *
+     * The fast-lock timer is deliberately left reset: nothing has been measured yet, so the
+     * leveller should still be allowed to move quickly once it has been.
+     */
+    void seedGain(float db) {
+        const float clamped = std::clamp(db, -SEED_LIMIT_DB, SEED_LIMIT_DB);
+        m_currentGainDb = clamped;
+        m_targetGainDb = clamped;
+        m_smoothGainLin = std::pow(10.0f, clamped / 20.0f);
+        m_fastLockTimerMs = 0;
+        m_isFrozen = false;
+    }
+
     void update(const LevelerParams& params, const LoudnessReadings& readings, size_t blocksIntegrated, float dtSeconds) {
         if (!params.freezeBreakdowns) {
             m_isFrozen = false;
@@ -132,6 +157,15 @@ public:
     bool isFrozen() const noexcept { return m_isFrozen; }
 
 private:
+    /**
+     * Hard bound on a seed, independent of maxBoost/maxCut.
+     *
+     * Those are parameters and are applied by update() once there is a measurement; this is
+     * only here so a nonsensical tag cannot blast the output before the first measurement
+     * arrives.
+     */
+    static constexpr float SEED_LIMIT_DB = 24.0f;
+
     double m_sampleRate = 48000.0;
     float m_currentGainDb = 0.0f;
     float m_targetGainDb = 0.0f;
