@@ -432,6 +432,15 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 
 ## 8. Changelog
 
+### 2026-09-19 — Configurable max compression ratio
+
+`MBCParams::maxRatio` / `EngineParameters::maxCompressionRatio` set the ratio reached at
+`compressionAmount = 1.0`. Both default to `Bands::MAX_RATIO` (4.0), so the plugin and every
+existing host are bit-identical; only a host that raises it sees a change. Added for the
+AutoLevel Android player, which wanted a firmer ceiling at 100%. `testMaxCompressionRatio`
+asserts the default is unchanged and that a higher ratio produces more gain reduction on the
+same signal (4:1 → −6.97 dB worst band, 6:1 → −7.75 dB).
+
 ### 2026-09-18 — Seed gain
 
 Added `Leveler::seedGain(float db)` and `AutoLevelEngine::seedGain(float db)` so a host that

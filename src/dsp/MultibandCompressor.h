@@ -18,6 +18,11 @@ struct MBCParams {
     bool enabled = true;
     bool autoMakeup = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
+    /**
+     * Ratio at compressionAmount = 1.0. Defaults to Bands::MAX_RATIO so existing hosts are
+     * bit-identical; a host wanting a firmer top end can raise it without affecting others.
+     */
+    float maxRatio = Bands::MAX_RATIO;
     float toneSlopeDbPerOctave = -2.0f; // Tonal target tilt (-3.0 to 0.0 dB/oct, default -2.0)
     TargetProfile profile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -211,8 +216,9 @@ public:
             true, params.toneSlopeDbPerOctave, params.profile, params.customOffsetsDb, params.baseThresholdDb
         );
 
-        // Compression ratio: 1.0 to 4.0 matching Android Shaper.kt
-        float ratio = 1.0f + params.compressionAmount * (Bands::MAX_RATIO - 1.0f);
+        // Compression ratio: 1.0 up to params.maxRatio (Bands::MAX_RATIO = 4.0 by default,
+        // matching Android Shaper.kt).
+        float ratio = 1.0f + params.compressionAmount * (params.maxRatio - 1.0f);
 
         // Process in sub-blocks of 32 samples for smooth, sub-millisecond adaptive makeup tracking
         constexpr size_t SUB_BLOCK = 32;

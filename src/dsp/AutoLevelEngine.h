@@ -34,6 +34,8 @@ struct EngineParameters {
     // Backward compatibility alias
     AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
+    /** Ratio at compressionAmount = 1.0. Default 4:1 — the plugin's long-standing behaviour. */
+    float maxCompressionRatio = Bands::MAX_RATIO;
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
     float hpfCutoffHz = 30.0f;      // 20 to 50 Hz low-cut filter
     bool hpfEnabled = true;
@@ -177,6 +179,7 @@ public:
         MBCParams mbcParams;
         mbcParams.enabled = (params.compressionAmount >= Bands::MIN_COMPRESSION);
         mbcParams.compressionAmount = params.compressionAmount;
+        mbcParams.maxRatio = params.maxCompressionRatio;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
         mbcParams.customOffsetsDb = params.customOffsetsDb;

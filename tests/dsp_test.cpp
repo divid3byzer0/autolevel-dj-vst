@@ -857,6 +857,49 @@ void testSeedGain() {
     std::cout << "  -> PASS: seed applied, overridden by measurement, clamped, and safe!" << std::endl;
 }
 
+
+void testMaxCompressionRatio() {
+    std::cout << "[TEST] Configurable max compression ratio..." << std::endl;
+
+    // Default must stay 4:1 -- existing hosts are entitled to unchanged behaviour.
+    EngineParameters defaults;
+    assert(std::abs(defaults.maxCompressionRatio - Bands::MAX_RATIO) < 1e-6f);
+
+    constexpr size_t N = 256;
+    auto measure = [](float maxRatio) {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        EngineParameters p;
+        p.compressionAmount = 1.0f;
+        p.maxCompressionRatio = maxRatio;
+        p.hpfEnabled = false;
+
+        std::vector<float> l(N), r(N);
+        double phase = 0.0;
+        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const float amp = std::pow(10.0f, -6.0f / 20.0f);
+        for (int block = 0; block < static_cast<int>(48000 * 4 / N); ++block) {
+            for (size_t i = 0; i < N; ++i) {
+                const float s = amp * static_cast<float>(std::sin(phase));
+                phase += inc;
+                l[i] = s; r[i] = s;
+            }
+            engine.process(l.data(), r.data(), N, p);
+        }
+        float worst = 0.0f;
+        for (auto gr : engine.getVisualState().mbcGainReductionsDb) worst = std::min(worst, gr);
+        return worst;
+    };
+
+    const float at4 = measure(4.0f);
+    const float at6 = measure(6.0f);
+    std::cout << "  -> 4:1 worst band GR " << at4 << " dB, 6:1 worst band GR " << at6 << " dB"
+              << std::endl;
+    assert(at6 < at4);   // more reduction is more negative
+
+    std::cout << "  -> PASS: default unchanged, higher ratio compresses harder!" << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -880,6 +923,7 @@ int main() {
     testInputSanitizerAntiNan();
     testLockFreeDoubleBufferedVisualState();
     testSeedGain();
+    testMaxCompressionRatio();
 
     std::cout << "============================================" << std::endl;
     std::cout << "   ALL DSP TESTS PASSED WITH 100% ACCURACY! " << std::endl;
