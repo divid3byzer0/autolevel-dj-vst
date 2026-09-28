@@ -29,7 +29,6 @@ struct EngineParameters {
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
     MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
-    bool mbcAutoMakeup = true;
     AirLiftMode airLift = AirLiftMode::OFF;
     // Backward compatibility alias
     AirWeight airWeight = AirWeight::OFF;
@@ -58,8 +57,6 @@ struct EngineVisualState {
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     LevelerSpeed activeSlewSpeed = LevelerSpeed::NORMAL;
     MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
-    bool activeMbcAutoMakeup = true;
-    float mbcAutoMakeupGainDb = 0.0f;
     AirLiftMode activeAirLift = AirLiftMode::OFF;
     float airLiftDb = 0.0f;
     // Compatibility field for UI meters
@@ -189,7 +186,6 @@ public:
         // reached if the user manually sets Target LUFS back to the old -9 dBFS default.
         mbcParams.baseThresholdDb = params.targetLUFS - 15.0f;
         mbcParams.speed = params.mbcSpeed;
-        mbcParams.autoMakeup = params.mbcAutoMakeup;
         m_mbc.process(left, right, numSamples, mbcParams);
 
         // 5. Stage 3: Post-MBC Gain stage (makeup/trim before safety limiter)
@@ -247,8 +243,6 @@ public:
         vs.activeProfile = params.targetProfile;
         vs.activeSlewSpeed = params.slewSpeed;
         vs.activeMbcSpeed = params.mbcSpeed;
-        vs.activeMbcAutoMakeup = params.mbcAutoMakeup;
-        vs.mbcAutoMakeupGainDb = m_mbc.getAutoMakeupGainDb();
         vs.activeAirLift = effAir;
         vs.airLiftDb = m_airLift.getLiftDb();
         // UI compatibility

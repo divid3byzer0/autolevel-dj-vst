@@ -89,7 +89,6 @@ void testLR4CrossoverSummation() {
     params.enabled = true;
     params.compressionAmount = Bands::MIN_COMPRESSION;
     params.baseThresholdDb = 60.0f;
-    params.autoMakeup = false;
     params.toneSlopeDbPerOctave = 0.0f;
 
     std::vector<double> testFreqs = { 30.0, 50.0, 120.0, 300.0, 400.0, 600.0, 800.0, 1200.0, 1800.0, 2000.0, 3500.0, 6000.0, 8000.0, 14000.0 };
@@ -202,8 +201,7 @@ void testMbcSpeedBallistics() {
         params.speed = speed;
         params.compressionAmount = 0.8f;
         params.baseThresholdDb = -24.0f;
-        params.autoMakeup = false;
-
+    
         size_t n = static_cast<size_t>(sampleRate * 0.1);
         std::vector<float> l(n), r(n);
         for (size_t i = 0; i < n; ++i) {
@@ -234,7 +232,6 @@ void testMbcSpeedBallistics() {
     pFast.speed = MBCSpeed::FAST;
     pFast.compressionAmount = 0.8f;
     pFast.baseThresholdDb = -24.0f;
-    pFast.autoMakeup = false;
 
     size_t n = static_cast<size_t>(sampleRate * 0.1);
     std::vector<float> l(n), r(n);
@@ -582,57 +579,40 @@ void testCustomToneProfile() {
     std::cout << "  -> PASS: Custom contour thresholds calculated and zero-sum re-centered perfectly." << std::endl;
 }
 
-void testMbcAutoMakeupGain() {
-    std::cout << "[TEST] MBC Adaptive Auto-Makeup Gain..." << std::endl;
+void testMbcHasNoMakeupGain() {
+    std::cout << "[TEST] MBC applies no makeup gain (auto-makeup removed)..." << std::endl;
     MultibandCompressor mbc;
     mbc.prepare(48000.0);
 
     MBCParams params;
     params.enabled = true;
-    params.compressionAmount = 0.8f;
+    params.compressionAmount = 0.8f; // heavy compression
     params.toneSlopeDbPerOctave = -2.0f;
-    params.baseThresholdDb = -30.0f;
-    params.autoMakeup = false;
+    params.baseThresholdDb = -30.0f; // low threshold to force deep gain reduction
 
+    // 1 kHz tone at -10 dBFS
     constexpr size_t N = 48000;
-    std::vector<float> leftOff(N), rightOff(N);
-    std::vector<float> leftOn(N), rightOn(N);
+    std::vector<float> left(N), right(N);
     for (size_t i = 0; i < N; ++i) {
-        float s = 0.3162f * std::sin(2.0 * TEST_PI * 1000.0 * i / 48000.0);
-        leftOff[i] = rightOff[i] = s;
-        leftOn[i] = rightOn[i] = s;
+        left[i] = right[i] = 0.3162f * std::sin(2.0 * TEST_PI * 1000.0 * i / 48000.0);
     }
+    mbc.process(left.data(), right.data(), N, params);
 
-    mbc.process(leftOff.data(), rightOff.data(), N, params);
-    float makeupOff = mbc.getAutoMakeupGainDb();
-    (void)makeupOff;
-    assert(makeupOff == 0.0f);
+    // Settled half: output level should equal input level minus the band's own gain reduction,
+    // with nothing added back on top (Post-MBC Gain is the only makeup stage now).
+    double sumSq = 0.0;
+    for (size_t i = 24000; i < N; ++i) sumSq += left[i] * left[i];
+    double outDb = 20.0 * std::log10(std::sqrt(sumSq / 24000.0) / (0.3162 / std::sqrt(2.0)));
+    float bandGrDb = mbc.getGainReductionsDb()[2]; // 1 kHz sits in band 2 (400-1200 Hz)
+    std::cout << "  Output change: " << outDb << " dB, band 2 GR: " << bandGrDb << " dB" << std::endl;
 
-    double sumSqOff = 0.0;
-    for (size_t i = 24000; i < N; ++i) {
-        sumSqOff += leftOff[i] * leftOff[i];
-    }
-    double rmsOff = std::sqrt(sumSqOff / 24000.0);
-
-    mbc.reset();
-    params.autoMakeup = true;
-    mbc.process(leftOn.data(), rightOn.data(), N, params);
-    float makeupOn = mbc.getAutoMakeupGainDb();
-    assert(makeupOn > 0.0f);
-
-    double sumSqOn = 0.0;
-    for (size_t i = 24000; i < N; ++i) {
-        sumSqOn += leftOn[i] * leftOn[i];
-    }
-    double rmsOn = std::sqrt(sumSqOn / 24000.0);
-
-    double diffDb = 20.0 * std::log10(rmsOn / rmsOff);
-    std::cout << "  Auto-Makeup OFF RMS: " << rmsOff << ", ON RMS: " << rmsOn
-              << " (Boost: +" << diffDb << " dB, Reported Makeup: +" << makeupOn << " dB)" << std::endl;
-
-    assert(rmsOn > rmsOff);
-    assert(std::abs(diffDb - makeupOn) < 0.5);
-    std::cout << "  -> PASS: MBC Auto-Makeup dynamically compensates compressed energy!" << std::endl;
+    assert(bandGrDb < -3.0f);                 // really compressing
+    assert(outDb < -3.0);                     // and nothing restored the level
+    // Within 1.5 dB rather than exact: GR ripples within each sine cycle (peak detector) and a
+    // little of the tone leaks across the 1.2 kHz crossover. The old auto-makeup added back
+    // 25% of this band's GR (~+2.5 dB here), which this tolerance does not let through.
+    assert(std::abs(outDb - bandGrDb) < 1.5);
+    std::cout << "  -> PASS: MBC output drops by its gain reduction, no makeup applied." << std::endl;
 }
 
 void testFullChain() {
@@ -918,7 +898,7 @@ int main() {
     testBreakdownFreezeSensitivity();
     testLevelerSlewSpeed();
     testCustomToneProfile();
-    testMbcAutoMakeupGain();
+    testMbcHasNoMakeupGain();
     testFullChain();
     testInputSanitizerAntiNan();
     testLockFreeDoubleBufferedVisualState();

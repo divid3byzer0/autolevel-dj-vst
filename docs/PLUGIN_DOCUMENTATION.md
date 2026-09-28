@@ -53,9 +53,10 @@ Input (stereo float)
 [3] DynamicAirLift — dynamic high-shelf upward expansion (> 6.5 kHz) + sibilance ducking
   ▼
 [4] MultibandCompressor (MBC) — 6-band Linkwitz-Riley crossover, per-band soft-knee
-  │     compression, phase-corrected recombination, adaptive auto-makeup gain
+  │     compression, phase-corrected recombination (no makeup gain — see [5])
   ▼
-[5] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB
+[5] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB; the only
+  │     makeup stage for the MBC's gain reduction since auto-makeup was removed (2026-09-29)
   ▼
 [6] HighPassFilter — 4th-order (24 dB/oct) Butterworth low cut, 20–50 Hz
   ▼
@@ -260,13 +261,9 @@ recalibrating the MBC to track −24 dBFS at the real default is ever wanted, ch
 offset to `10.0f` (`-14 - 10 = -24`), understanding that this changes live audio behavior for
 every preset that doesn't override Target LUFS.
 
-**Auto-makeup:** a 6-band weighted average of each band's current gain reduction
-(weights: Sub 0.10, Bass 0.20, Low-Mid 0.25, High-Mid 0.25, Presence 0.15, Air 0.05 — biased
-toward the perceptually dominant midrange) drives a smoothed makeup gain, recomputed every
-32-sample sub-block (sub-millisecond adaptation, ~0.67ms latency at 48kHz between "true" gain
-reduction and makeup catching up — an intentional smoothing tradeoff, not a bug). **Not exposed
-as a plugin parameter** — always on (`EngineParameters::mbcAutoMakeup` defaults to `true` and
-`PluginProcessor.cpp` never sets it from any APVTS parameter, because none exists for it).
+**No makeup gain (auto-makeup removed 2026-09-29, §8):** the MBC's output level drops by
+whatever gain reduction it applies; the Post Gain parameter (§3.6) is where that is made up by
+hand.
 
 ### 3.6 Post-MBC Gain
 
@@ -371,7 +368,6 @@ These are implemented and unit-tested in `src/dsp/`, but `PluginProcessor.cpp` n
 from any `AudioProcessorValueTreeState` parameter, so they always run at their hardcoded
 `EngineParameters` struct default:
 
-- **`mbcAutoMakeup`** (default `true`, always on) — see §3.5.
 - **`breakdownThresholdLU`** (default `7.0f` LU) — the sensitivity of breakdown-freeze
   detection. `Leveler` supports a configurable threshold (tested with 5/7/9 LU sensitivity in
   `testBreakdownFreezeSensitivity`) but the plugin only exposes a plain On/Off toggle, always
@@ -431,6 +427,27 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ---
 
 ## 8. Changelog
+
+### 2026-09-29 — Removed MBC auto-makeup (ported from autolevel-box)
+
+Mirrors autolevel-box commit `40befa9`. Auto-makeup was one broadband gain on the recombined
+MBC output — a weighted average of the six bands' gain reduction (0.10/0.20/0.25/0.25/0.15/0.05,
+clamped 0–12 dB) — so it never changed the band-to-band balance that is the tone shaping. The
+owner removed it anyway: Post Gain already covers makeup by hand, and it is one fewer automatic
+gain stage moving the output level on its own.
+
+It was never a plugin parameter here (always on), so only the DSP changed: `MBCParams::autoMakeup`,
+`EngineParameters::mbcAutoMakeup`, the two `EngineVisualState` makeup fields and
+`MultibandCompressor::getAutoMakeupGainDb()` are gone, and the 32-sample makeup sub-block loop
+is now a plain per-sample loop. `PluginProcessor`/`PluginEditor` never referenced any of it.
+
+**Behavior change:** output after the MBC is now quieter by however much it compresses, until
+Post Gain is raised. Host session state is unaffected (no parameter was removed).
+
+Tests: `testMbcAutoMakeupGain` replaced by `testMbcHasNoMakeupGain` (heavy compression on a
+1 kHz tone: output drops by band 2's own gain reduction within 1.5 dB — −8.6 dB against a
+−9.8 dB GR; confirmed to **fail** against the previous code, which measured −4.3 dB). Full JUCE
+build (VST3/AU/Standalone) clean.
 
 ### 2026-09-19 — Configurable max compression ratio
 

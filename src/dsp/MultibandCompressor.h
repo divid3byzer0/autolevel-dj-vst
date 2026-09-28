@@ -16,7 +16,6 @@ enum class MBCSpeed {
 
 struct MBCParams {
     bool enabled = true;
-    bool autoMakeup = true;
     float compressionAmount = 0.5f;     // 0.0 (bypass) to 1.0 (heavy)
     /**
      * Ratio at compressionAmount = 1.0. Defaults to Bands::MAX_RATIO so existing hosts are
@@ -168,8 +167,6 @@ public:
         for (size_t b = 0; b < Bands::COUNT; ++b) {
             m_bands[b].reset();
         }
-        m_autoMakeupGainDb = 0.0f;
-        m_smoothMakeupLin = 1.0f;
     }
 
     void updateSpeed(MBCSpeed speed) {
@@ -204,8 +201,6 @@ public:
             for (size_t b = 0; b < Bands::COUNT; ++b) {
                 m_bands[b].reset();
             }
-            m_autoMakeupGainDb = 0.0f;
-            m_smoothMakeupLin = 1.0f;
             return;
         }
 
@@ -220,62 +215,26 @@ public:
         // matching Android Shaper.kt).
         float ratio = 1.0f + params.compressionAmount * (params.maxRatio - 1.0f);
 
-        // Process in sub-blocks of 32 samples for smooth, sub-millisecond adaptive makeup tracking
-        constexpr size_t SUB_BLOCK = 32;
-        size_t s = 0;
-        while (s < numSamples) {
-            size_t chunk = std::min(SUB_BLOCK, numSamples - s);
+        // No makeup gain here: the MBC's output level is set by hand with the Post-MBC Gain
+        // stage that follows it (auto-makeup was removed 2026-09-29, as in autolevel-box).
+        for (size_t s = 0; s < numSamples; ++s) {
+            std::array<float, Bands::COUNT> bandL;
+            std::array<float, Bands::COUNT> bandR;
 
-            float targetMakeupDb = 0.0f;
-            if (params.autoMakeup) {
-                constexpr std::array<float, Bands::COUNT> weights = { 0.10f, 0.20f, 0.25f, 0.25f, 0.15f, 0.05f };
-                float effGrDb = 0.0f;
-                for (size_t b = 0; b < Bands::COUNT; ++b) {
-                    effGrDb += weights[b] * m_bands[b].getGainReductionDb();
-                }
-                targetMakeupDb = std::clamp(-effGrDb, 0.0f, 12.0f);
-            }
-            m_autoMakeupGainDb = targetMakeupDb;
+            split6Bands(0, left[s], bandL);
+            split6Bands(1, right[s], bandR);
 
-            float targetLin = std::pow(10.0f, targetMakeupDb / 20.0f);
-            float step = (targetLin - m_smoothMakeupLin) / static_cast<float>(chunk);
+            float outL = 0.0f;
+            float outR = 0.0f;
 
-            for (size_t i = 0; i < chunk; ++i, ++s) {
-                float inL = left[s];
-                float inR = right[s];
-
-                std::array<float, Bands::COUNT> bandL;
-                std::array<float, Bands::COUNT> bandR;
-
-                split6Bands(0, inL, bandL);
-                split6Bands(1, inR, bandR);
-
-                float outL = 0.0f;
-                float outR = 0.0f;
-
-                for (size_t b = 0; b < Bands::COUNT; ++b) {
-                    m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio, params.compressionAmount);
-                    outL += bandL[b];
-                    outR += bandR[b];
-                }
-
-                m_smoothMakeupLin += step;
-                left[s] = outL * m_smoothMakeupLin;
-                right[s] = outR * m_smoothMakeupLin;
-            }
-            m_smoothMakeupLin = targetLin;
-        }
-
-        // Final update of reported makeup gain at end of block
-        if (params.autoMakeup) {
-            constexpr std::array<float, Bands::COUNT> weights = { 0.10f, 0.20f, 0.25f, 0.25f, 0.15f, 0.05f };
-            float effGrDb = 0.0f;
             for (size_t b = 0; b < Bands::COUNT; ++b) {
-                effGrDb += weights[b] * m_bands[b].getGainReductionDb();
+                m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio, params.compressionAmount);
+                outL += bandL[b];
+                outR += bandR[b];
             }
-            m_autoMakeupGainDb = std::clamp(-effGrDb, 0.0f, 12.0f);
-        } else {
-            m_autoMakeupGainDb = 0.0f;
+
+            left[s] = outL;
+            right[s] = outR;
         }
     }
 
@@ -285,10 +244,6 @@ public:
             gr[b] = m_bands[b].getGainReductionDb();
         }
         return gr;
-    }
-
-    float getAutoMakeupGainDb() const noexcept {
-        return m_autoMakeupGainDb;
     }
 
 private:
@@ -364,8 +319,6 @@ private:
 
     std::array<BandCompressor, Bands::COUNT> m_bands;
     MBCSpeed m_currentSpeed = MBCSpeed::NORMAL;
-    float m_autoMakeupGainDb = 0.0f;
-    float m_smoothMakeupLin = 1.0f;
 };
 
 } // namespace autolevel::dsp
