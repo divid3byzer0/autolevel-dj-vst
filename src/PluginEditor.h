@@ -163,6 +163,13 @@ private:
     juce::Label m_releaseLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_releaseAttachment;
 
+    // MBC release mode switch (Manual / Auto) in the Tone Shaper header
+    juce::ComboBox m_releaseModeBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_releaseModeAttachment;
+    juce::Label m_releaseModeLabel;
+    juce::TextButton m_releaseManualBtn{"MANUAL"};
+    juce::TextButton m_releaseAutoBtn{"AUTO"};
+
     // Band EQ: one vertical fader per MBC band (beside that band's meter), plus a Before/After-MBC switch
     std::array<juce::Slider, autolevel::dsp::Bands::COUNT> m_eqSliders;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, autolevel::dsp::Bands::COUNT> m_eqAttachments;

@@ -20,9 +20,18 @@ struct MBCParams {
     TargetProfile profile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     float baseThresholdDb = Bands::MBC_THRESHOLD_DB;
-    /** Attack / release of bands 1-5 in ms. The Sub band runs at twice both (see SUB_TIME_SCALE). */
+    /**
+     * Attack / release of bands 1-5 in ms. The Sub band runs at twice both (see SUB_TIME_SCALE),
+     * its release capped at MAX_RELEASE_MS.
+     */
     float attackMs = 15.0f;
     float releaseMs = 200.0f;
+    /**
+     * Program-dependent release. Off = one envelope at releaseMs (the classic behaviour). On = a
+     * second, slow envelope runs alongside: short hits recover at releaseMs, sustained compression
+     * recovers up to AUTO_SLOW_FACTOR times slower. See BandCompressor::processStereo.
+     */
+    bool autoRelease = false;
     /** Level detector: 0.0 = pure peak, 1.0 = pure RMS, in between blends the two. */
     float detectorRmsMix = 0.0f;
 };
@@ -43,8 +52,15 @@ public:
         m_releaseCoeff = std::exp(-1.0 / (m_sampleRate * (releaseMs * 0.001)));
     }
 
+    /** Ballistics of the auto-release slow envelope. */
+    void updateSlowBallistics(float slowAttackMs, float slowReleaseMs) noexcept {
+        m_slowAttackCoeff = std::exp(-1.0 / (m_sampleRate * (slowAttackMs * 0.001)));
+        m_slowReleaseCoeff = std::exp(-1.0 / (m_sampleRate * (slowReleaseMs * 0.001)));
+    }
+
     void reset() {
         m_envelope = 0.0;
+        m_slowEnvelope = 0.0;
         m_meanSquare = 0.0;
         m_gainReductionDb = 0.0f;
     }
@@ -55,9 +71,15 @@ public:
      * rmsMix selects what the level detector sees: 0 = the stereo-linked peak, 1 = the
      * stereo-linked RMS, anything between is a linear blend of the two. The attack / release
      * ballistics are applied to the blended level either way.
+     *
+     * autoRelease: the gain follows the larger of two envelopes on the same level - the normal
+     * one (user attack / release) and a slow one (slow attack, slow release). A short hit barely
+     * charges the slow one, so it recovers at the user release; sustained material charges both,
+     * so when it stops the gain comes back on the slow release instead of pumping. On steady
+     * material both read the same level, so the amount of compression does not change.
      */
     inline void processStereo(float& left, float& right, float thresholdDb, float ratio, float amount,
-                              float rmsMix) noexcept {
+                              float rmsMix, bool autoRelease = false) noexcept {
         if (amount < Bands::MIN_COMPRESSION || ratio <= 1.001f) {
             m_gainReductionDb = 0.0f;
             return;
@@ -83,7 +105,21 @@ public:
             m_envelope = level + m_releaseCoeff * (m_envelope - level);
         }
 
-        double envDb = (m_envelope > 1e-6) ? 20.0 * std::log10(m_envelope) : -120.0;
+        // Slow envelope, tracked in Manual too so switching to Auto never starts from a stale value.
+        if (level > m_slowEnvelope) {
+            m_slowEnvelope = level + m_slowAttackCoeff * (m_slowEnvelope - level);
+        } else {
+            m_slowEnvelope = level + m_slowReleaseCoeff * (m_slowEnvelope - level);
+        }
+        // Leaving Auto: carry the combined level into the normal envelope, so the gain releases
+        // from where it was instead of jumping up in one sample.
+        if (m_wasAutoRelease && !autoRelease) {
+            m_envelope = std::max(m_envelope, m_slowEnvelope);
+        }
+        m_wasAutoRelease = autoRelease;
+        const double envelope = autoRelease ? std::max(m_envelope, m_slowEnvelope) : m_envelope;
+
+        double envDb = (envelope > 1e-6) ? 20.0 * std::log10(envelope) : -120.0;
         double overDb = envDb - thresholdDb;
 
         // Soft-knee calculation (knee width = 6.0 dB, half-knee = 3.0 dB)
@@ -123,6 +159,10 @@ private:
     double m_releaseCoeff = 0.0;
     double m_rmsCoeff = 0.0;
     double m_envelope = 0.0;
+    double m_slowAttackCoeff = 0.0;
+    double m_slowReleaseCoeff = 0.0;
+    double m_slowEnvelope = 0.0;
+    bool m_wasAutoRelease = false;
     double m_meanSquare = 0.0;
     float m_gainReductionDb = 0.0f;
 };
@@ -130,7 +170,7 @@ private:
 /**
  * 6-band Linkwitz-Riley (LR4) crossover filterbank and dynamic compressor.
  * Attack/Release are user-set; the defaults mirror Android GainProcessor:
- * - Band 0 (Sub, < 120 Hz): twice the chosen times (default 30 ms / 400 ms)
+ * - Band 0 (Sub, < 120 Hz): twice the chosen times (default 30 ms / 400 ms), release capped at 5 s
  * - Bands 1-5: the chosen times (default 15 ms / 200 ms)
  * - Knee width: 6 dB
  */
@@ -144,7 +184,12 @@ public:
     static constexpr float MIN_ATTACK_MS = 1.0f;
     static constexpr float MAX_ATTACK_MS = 100.0f;
     static constexpr float MIN_RELEASE_MS = 20.0f;
-    static constexpr float MAX_RELEASE_MS = 1000.0f;
+    static constexpr float MAX_RELEASE_MS = 5000.0f;
+
+    /** Auto release: the slow envelope releases this many times slower than the Release knob... */
+    static constexpr float AUTO_SLOW_FACTOR = 10.0f;
+    /** ...and charges this slowly (ms, bands 1-5; Sub x2), so only sustained material reaches it. */
+    static constexpr float AUTO_SLOW_ATTACK_MS = 300.0f;
 
     void prepare(double sampleRate) {
         m_sampleRate = sampleRate;
@@ -154,10 +199,11 @@ public:
         // match it, or a later process() with the same times would skip a needed update.
         m_attackMs = DEFAULT_ATTACK_MS;
         m_releaseMs = DEFAULT_RELEASE_MS;
-        m_bands[0].setup(sampleRate, m_attackMs * SUB_TIME_SCALE, m_releaseMs * SUB_TIME_SCALE);
+        m_bands[0].setup(sampleRate, m_attackMs * SUB_TIME_SCALE, subRelease(m_releaseMs));
         for (size_t b = 1; b < Bands::COUNT; ++b) {
             m_bands[b].setup(sampleRate, m_attackMs, m_releaseMs);
         }
+        applySlowBallistics();
 
         reset();
     }
@@ -203,7 +249,7 @@ public:
 
             for (size_t b = 0; b < Bands::COUNT; ++b) {
                 m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio,
-                                         params.compressionAmount, rmsMix);
+                                         params.compressionAmount, rmsMix, params.autoRelease);
                 outL += bandL[b];
                 outR += bandR[b];
             }
@@ -236,9 +282,25 @@ private:
         if (std::abs(attackMs - m_attackMs) < 1e-6f && std::abs(releaseMs - m_releaseMs) < 1e-6f) return;
         m_attackMs = attackMs;
         m_releaseMs = releaseMs;
-        m_bands[0].updateBallistics(attackMs * SUB_TIME_SCALE, releaseMs * SUB_TIME_SCALE);
+        m_bands[0].updateBallistics(attackMs * SUB_TIME_SCALE, subRelease(releaseMs));
         for (size_t b = 1; b < Bands::COUNT; ++b) {
             m_bands[b].updateBallistics(attackMs, releaseMs);
+        }
+        applySlowBallistics();
+    }
+
+    /** Sub runs at 2x, but never slower than the longest release the knob offers. */
+    static float subRelease(float releaseMs) noexcept {
+        return std::min(releaseMs * SUB_TIME_SCALE, MAX_RELEASE_MS);
+    }
+
+    /** Slow envelope of auto release: 10x the band's release, capped at MAX_RELEASE_MS. */
+    void applySlowBallistics() noexcept {
+        m_bands[0].updateSlowBallistics(AUTO_SLOW_ATTACK_MS * SUB_TIME_SCALE,
+                                        std::min(subRelease(m_releaseMs) * AUTO_SLOW_FACTOR, MAX_RELEASE_MS));
+        for (size_t b = 1; b < Bands::COUNT; ++b) {
+            m_bands[b].updateSlowBallistics(AUTO_SLOW_ATTACK_MS,
+                                            std::min(m_releaseMs * AUTO_SLOW_FACTOR, MAX_RELEASE_MS));
         }
     }
 

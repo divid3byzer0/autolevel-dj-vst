@@ -664,6 +664,29 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupEqPosBtn(m_eqBeforeBtn, 0);
     setupEqPosBtn(m_eqAfterBtn, 1);
 
+    // MBC release mode (Tone Shaper header): Manual / Auto
+    m_releaseModeBox.addItem("Manual", 1);
+    m_releaseModeBox.addItem("Auto", 2);
+    m_content.addChildComponent(m_releaseModeBox);
+
+    m_releaseModeLabel.setText("RELEASE:", juce::dontSendNotification);
+    m_releaseModeLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_releaseModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_releaseModeLabel.setJustificationType(juce::Justification::centredRight);
+    m_releaseModeLabel.setTooltip("Auto: short hits recover at the MBC Release time, sustained "
+                                  "compression up to 10x slower (max 5000 ms), so dense passages don't pump.");
+    m_content.addAndMakeVisible(m_releaseModeLabel);
+
+    auto setupReleaseModeBtn = [this](juce::TextButton& btn, int index) {
+        btn.setClickingTogglesState(false);
+        btn.onClick = [this, index]() {
+            m_releaseModeBox.setSelectedItemIndex(index, juce::sendNotificationSync);
+        };
+        m_content.addAndMakeVisible(btn);
+    };
+    setupReleaseModeBtn(m_releaseManualBtn, 0);
+    setupReleaseModeBtn(m_releaseAutoBtn, 1);
+
     // Band EQ faders, one beside each band's GR meter (added after the rack so they sit on top)
     for (auto& sl : m_eqSliders) {
         sl.setSliderStyle(juce::Slider::LinearVertical);
@@ -695,6 +718,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
         apvts, AutoLevelDJAudioProcessor::ID_MBC_RELEASE, m_releaseSlider);
     m_eqPositionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_EQ_POSITION, m_eqPositionBox);
+    m_releaseModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        apvts, AutoLevelDJAudioProcessor::ID_MBC_RELEASE_MODE, m_releaseModeBox);
     m_lookaheadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         apvts, AutoLevelDJAudioProcessor::ID_LIMITER_LOOKAHEAD, m_lookaheadBox);
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
@@ -765,6 +790,11 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_lookaheadOffBtn.setToggleState(lookaheadIdx == 0, juce::dontSendNotification);
     m_lookahead1Btn.setToggleState(lookaheadIdx == 1, juce::dontSendNotification);
     m_lookahead2Btn.setToggleState(lookaheadIdx == 2, juce::dontSendNotification);
+
+    // Sync MBC release mode segmented buttons
+    int releaseModeIdx = m_releaseModeBox.getSelectedItemIndex();
+    m_releaseManualBtn.setToggleState(releaseModeIdx == 0, juce::dontSendNotification);
+    m_releaseAutoBtn.setToggleState(releaseModeIdx == 1, juce::dontSendNotification);
 
     // Sync EQ position segmented buttons
     int eqPosIdx = m_eqPositionBox.getSelectedItemIndex();
@@ -1166,6 +1196,11 @@ void AutoLevelDJAudioProcessorEditor::layoutContent() {
     m_slewSlowBtn.setBounds(349, 202, 38, 20);
     m_slewNormalBtn.setBounds(390, 202, 44, 20);
     m_slewFastBtn.setBounds(437, 202, 38, 20);
+
+    // MBC release mode switch inside Card 4 header (x = 392 to 580, where the Air buttons were)
+    m_releaseModeLabel.setBounds(392, 242, 60, 20);
+    m_releaseManualBtn.setBounds(456, 242, 64, 20);
+    m_releaseAutoBtn.setBounds(524, 242, 56, 20);
 
     // Band EQ position switch inside Card 4 header (x = 594 to 800, where MBC Speed used to be)
     m_eqPositionLabel.setBounds(594, 242, 26, 20);

@@ -57,6 +57,7 @@ public:
     static constexpr const char* ID_MBC_ATTACK = "mbc_attack";
     static constexpr const char* ID_MBC_RELEASE = "mbc_release";
     static constexpr const char* ID_MBC_DETECTOR = "mbc_detector";
+    static constexpr const char* ID_MBC_RELEASE_MODE = "mbc_release_mode";
     static constexpr const char* ID_EQ_POSITION = "eq_position";
     static constexpr const char* ID_LIMITER_LOOKAHEAD = "limiter_lookahead";
     static constexpr const char* ID_POST_MBC_GAIN = "post_mbc_gain";
@@ -90,6 +91,7 @@ private:
     std::atomic<float>* m_mbcAttackParam = nullptr;
     std::atomic<float>* m_mbcReleaseParam = nullptr;
     std::atomic<float>* m_mbcDetectorParam = nullptr;
+    std::atomic<float>* m_mbcReleaseModeParam = nullptr;
     std::atomic<float>* m_eqPositionParam = nullptr;
     std::atomic<float>* m_lookaheadParam = nullptr;
     std::atomic<double> m_sampleRate{48000.0};

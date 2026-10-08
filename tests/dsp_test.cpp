@@ -289,6 +289,98 @@ void testMbcAttackRelease() {
     std::cout << "  -> PASS: attack and release shape the compressor, are clamped, and survive prepare()." << std::endl;
 }
 
+void testMbcLongReleaseAndAutoRelease() {
+    std::cout << "[TEST] MBC release up to 5000 ms, and auto (program-dependent) release..." << std::endl;
+    const double sr = 48000.0;
+
+    // Band 2 (700 Hz) loud for `loudSec`, then quiet. Returns band-2 GR at the end of the loud
+    // part and `afterSec` after it.
+    auto run = [&](bool autoRel, float releaseMs, double loudSec, double afterSec, float& atEnd) {
+        MultibandCompressor mbc;
+        mbc.prepare(sr);
+        MBCParams p;
+        p.compressionAmount = 0.8f;
+        p.baseThresholdDb = -30.0f;
+        p.releaseMs = releaseMs;
+        p.autoRelease = autoRel;
+        const size_t block = 480;
+        size_t loud = static_cast<size_t>(sr * loudSec), stop = loud + static_cast<size_t>(sr * afterSec);
+        std::vector<float> l(block), r(block);
+        float gr = 0.0f;
+        for (size_t o = 0; o < stop; o += block) {
+            for (size_t i = 0; i < block; ++i) {
+                l[i] = r[i] = static_cast<float>(((o + i) < loud ? 0.5 : 0.02) * std::sin(2.0 * TEST_PI * 700.0 * (o + i) / sr));
+            }
+            mbc.process(l.data(), r.data(), block, p);
+            gr = mbc.getGainReductionsDb()[2];
+            if (o + block == loud) atEnd = gr;
+        }
+        return gr;
+    };
+
+    float e = 0;
+    // Longer manual release holds longer; 5000 ms is reachable and is the cap.
+    float rel1000 = run(false, 1000.0f, 3.0, 1.0, e);
+    float rel5000 = run(false, 5000.0f, 3.0, 1.0, e);
+    float rel9000 = run(false, 9000.0f, 3.0, 1.0, e);
+    std::cout << "  Manual, 1 s after 3 s loud: release 1000 -> " << rel1000 << " dB, 5000 -> " << rel5000
+              << " dB, 9000 (clamped) -> " << rel9000 << " dB" << std::endl;
+    assert(rel5000 < rel1000 - 3.0f);
+    assert(rel9000 == rel5000);
+    // The Sub band's 2x is capped at the maximum too: from 2500 ms up it runs at 5000 ms.
+    MultibandCompressor a, b;
+    a.prepare(sr); b.prepare(sr);
+    MBCParams pa; pa.compressionAmount = 0.8f; pa.baseThresholdDb = -30.0f; pa.releaseMs = 2500.0f;
+    MBCParams pb = pa; pb.releaseMs = 5000.0f;
+    auto la = subSine(sr, 0.5), ra = la, lb = la, rb = la;
+    a.process(la.data(), ra.data(), la.size(), pa);
+    b.process(lb.data(), rb.data(), lb.size(), pb);
+    std::vector<float> qa(24000, 0.0f), qra = qa, qb = qa, qrb = qa;
+    a.process(qa.data(), qra.data(), qa.size(), pa);
+    b.process(qb.data(), qrb.data(), qb.size(), pb);
+    assert(a.getGainReductionsDb()[0] == b.getGainReductionsDb()[0]);
+
+    // Auto: a short hit recovers exactly like Manual; sustained compression recovers far slower;
+    // steady-state compression is unchanged.
+    float endManual = 0, endAuto = 0;
+    float hitManual = run(false, 200.0f, 0.01, 0.2, e);
+    float hitAuto = run(true, 200.0f, 0.01, 0.2, e);
+    float susManual = run(false, 200.0f, 3.0, 0.5, endManual);
+    float susAuto = run(true, 200.0f, 3.0, 0.5, endAuto);
+    std::cout << "  200 ms after a 10 ms hit:   Manual " << hitManual << " dB, Auto " << hitAuto << " dB" << std::endl;
+    std::cout << "  500 ms after 3 s of loud:   Manual " << susManual << " dB, Auto " << susAuto << " dB" << std::endl;
+    std::cout << "  GR at the end of 3 s loud:  Manual " << endManual << " dB, Auto " << endAuto << " dB" << std::endl;
+    assert(std::abs(hitAuto - hitManual) < 0.05f);
+    assert(susAuto < susManual - 6.0f);
+    assert(std::abs(endAuto - endManual) < 0.1f);
+
+    // Leaving Auto mid-release does not jump the gain.
+    {
+        MultibandCompressor m;
+        m.prepare(sr);
+        MBCParams p;
+        p.compressionAmount = 0.8f;
+        p.baseThresholdDb = -30.0f;
+        p.autoRelease = true;
+        size_t n = static_cast<size_t>(sr * 3.5);
+        std::vector<float> l(48), r(48);
+        float prev = 0.0f, maxJump = 0.0f;
+        for (size_t o = 0; o < n; o += 48) {
+            if (o >= static_cast<size_t>(sr * 3.2)) p.autoRelease = false;
+            for (size_t i = 0; i < 48; ++i) {
+                l[i] = r[i] = static_cast<float>(((o + i) < sr * 3.0 ? 0.5 : 0.02) * std::sin(2.0 * TEST_PI * 700.0 * (o + i) / sr));
+            }
+            m.process(l.data(), r.data(), 48, p);
+            float g = m.getGainReductionsDb()[2];
+            if (o > static_cast<size_t>(sr * 3.1)) maxJump = std::max(maxJump, std::abs(g - prev));
+            prev = g;
+        }
+        std::cout << "  Auto -> Manual during release: largest GR change per ms " << maxJump << " dB" << std::endl;
+        assert(maxJump < 0.5f);
+    }
+    std::cout << "  -> PASS: release reaches 5 s, auto release is fast on hits and slow after sustained compression." << std::endl;
+}
+
 void testMbcLiveBallisticsChange() {
     std::cout << "[TEST] Changing attack/release mid-playback does not reset the compressor..." << std::endl;
     double sampleRate = 48000.0;
@@ -1328,6 +1420,7 @@ int main() {
     testEbuR128DynamicLoudness();
     testMbcAttackRelease();
     testMbcLiveBallisticsChange();
+    testMbcLongReleaseAndAutoRelease();
     testMbcRmsDetector();
     testBandEqFlatAndPerBand();
     testBandEqGainSmoothing();

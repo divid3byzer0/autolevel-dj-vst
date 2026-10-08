@@ -63,7 +63,8 @@ Audio Out (Clean, Leveled, Punchy Audio to Amps)
 * Rather than using static corrective EQ (which sounds awful when an arrangement naturally lacks bass or drums), tone shaping is performed by a **6-band Linkwitz-Riley (LR4)** dynamic compressor.
 * Thresholds dynamically follow a selectable spectral tilt (e.g. pink noise −3.75 dB/octave).
 * Quiet bands sit safely under their thresholds and remain 100% untouched. Only unruly sub-bass bursts or harsh treble peaks are transparently reeled in.
-* **You set the ballistics:** Attack (1–100 ms) and Release (20–1000 ms) knobs. The Sub band always runs at twice the times you choose.
+* **You set the ballistics:** Attack (1–100 ms) and Release (20–5000 ms) knobs. The Sub band always runs at twice the times you choose (release capped at 5000 ms).
+* **Auto release:** switch RELEASE to AUTO and the release becomes program-dependent: short hits recover at your Release time, but after sustained compression the gain comes back up to 10× slower, so dense passages don't pump.
 * **Peak or RMS:** the Detector knob blends the level detector from pure peak (0%) through to pure RMS (100%). RMS ignores short transients and reacts to sustained energy, so it compresses more gently — a good choice when you want the body of a track controlled without grabbing every drum hit.
 
 ### 4. Band EQ
@@ -163,7 +164,8 @@ Pre-compiled binary packages for macOS and Windows are published under [GitHub R
 | **Slew Speed** | Slow / Normal / Fast | **Normal** | AGC gain-change speed once a new target is computed: 0.5/0.75/1.5 dB/s upward (2x that downward). Separate from Level Response, which controls how fast the loudness *measurement* itself reacts. |
 | **Detector** | Peak (0%) to RMS (100%) | **Peak** | What the compressor listens to. In between blends the two. RMS reads lower than peak on real music, so it compresses less at the same settings. |
 | **MBC Attack** | 1 to 100 ms | **15 ms** | How fast the compressor clamps down. The Sub band runs at 2× this. A different stage from Slew Speed above. |
-| **MBC Release** | 20 to 1000 ms | **200 ms** | How fast it lets go. The Sub band runs at 2× this. |
+| **MBC Release** | 20 to 5000 ms | **200 ms** | How fast it lets go. The Sub band runs at 2× this (max 5000 ms). |
+| **Release Mode** | Manual / Auto | **Manual** | Auto = program-dependent release: fast after short hits, up to 10× slower after sustained compression. |
 | **EQ Sub … Air** | −12 to +12 dB | **0 dB** | Six-band EQ on the compressor's bands. |
 | **EQ Position** | Before MBC / After MBC | **After MBC** | Where the EQ sits relative to the compressor. Always after the AGC. |
 | **Breakdown Freeze** | On / Off | **On** | Freezes upward gain boost during breakdowns and quiet intros. |

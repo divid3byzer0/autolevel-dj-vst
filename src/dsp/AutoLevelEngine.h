@@ -27,7 +27,8 @@ struct EngineParameters {
     std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
     float compressionAmount = 0.5f; // 0..1 slider
     float mbcAttackMs = 15.0f;      // 1 to 100 ms (Sub band runs at 2x)
-    float mbcReleaseMs = 200.0f;    // 20 to 1000 ms (Sub band runs at 2x)
+    float mbcReleaseMs = 200.0f;    // 20 to 5000 ms (Sub band runs at 2x, capped at 5000)
+    bool mbcAutoRelease = false;    // program-dependent release (see MBCParams::autoRelease)
     float mbcDetectorRms = 0.0f;    // 0 = peak detector, 1 = RMS detector, between = blend
     /** Ratio at compressionAmount = 1.0. Default 4:1 — the plugin's long-standing behaviour. */
     float maxCompressionRatio = Bands::MAX_RATIO;
@@ -193,6 +194,7 @@ public:
         mbcParams.maxRatio = params.maxCompressionRatio;
         mbcParams.attackMs = params.mbcAttackMs;
         mbcParams.releaseMs = params.mbcReleaseMs;
+        mbcParams.autoRelease = params.mbcAutoRelease;
         mbcParams.detectorRmsMix = params.mbcDetectorRms;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;

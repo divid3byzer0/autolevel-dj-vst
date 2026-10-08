@@ -59,7 +59,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
         1)); // Default: Modern Mix
 
     // MBC ballistics. Log-skewed with the old "Normal" preset (15 ms / 200 ms) at the centre of
-    // travel; the Sub band runs at twice whatever is set here.
+    // travel; the Sub band runs at twice whatever is set here (its release capped at 5000 ms).
     {
         using Mbc = autolevel::dsp::MultibandCompressor;
         juce::NormalisableRange<float> attackRange(Mbc::MIN_ATTACK_MS, Mbc::MAX_ATTACK_MS, 0.1f);
@@ -84,6 +84,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::c
                 .withLabel("ms")
                 .withStringFromValueFunction([](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; })));
     }
+
+    // MBC release mode. Auto = program-dependent: short hits recover at the Release time,
+    // sustained compression up to 10x slower (capped at 5000 ms).
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{ID_MBC_RELEASE_MODE, 1},
+        "MBC Release Mode",
+        juce::StringArray{"Manual", "Auto"},
+        0)); // Default: Manual (the long-standing behaviour)
 
     // Level detector for the MBC: 0 = pure peak, 1 = pure RMS, in between blends the two.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -190,6 +198,7 @@ AutoLevelDJAudioProcessor::AutoLevelDJAudioProcessor()
     m_mbcAttackParam = m_apvts.getRawParameterValue(ID_MBC_ATTACK);
     m_mbcReleaseParam = m_apvts.getRawParameterValue(ID_MBC_RELEASE);
     m_mbcDetectorParam = m_apvts.getRawParameterValue(ID_MBC_DETECTOR);
+    m_mbcReleaseModeParam = m_apvts.getRawParameterValue(ID_MBC_RELEASE_MODE);
     m_eqPositionParam = m_apvts.getRawParameterValue(ID_EQ_POSITION);
     m_lookaheadParam = m_apvts.getRawParameterValue(ID_LIMITER_LOOKAHEAD);
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b)
@@ -286,6 +295,7 @@ void AutoLevelDJAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     params.mbcAttackMs = m_mbcAttackParam ? m_mbcAttackParam->load() : 15.0f;
     params.mbcReleaseMs = m_mbcReleaseParam ? m_mbcReleaseParam->load() : 200.0f;
     params.mbcDetectorRms = m_mbcDetectorParam ? m_mbcDetectorParam->load() : 0.0f;
+    params.mbcAutoRelease = m_mbcReleaseModeParam ? (juce::roundToInt(m_mbcReleaseModeParam->load()) == 1) : false;
 
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b)
         params.eqGainsDb[b] = m_eqBandParams[b] ? m_eqBandParams[b]->load() : 0.0f;

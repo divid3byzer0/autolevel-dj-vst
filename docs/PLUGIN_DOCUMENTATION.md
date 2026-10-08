@@ -188,7 +188,7 @@ bands back together.
 
 | # | Name | Range | Attack | Release |
 |---|---|---|---|---|
-| 0 | Sub | 20–120 Hz | 2 × MBC Attack | 2 × MBC Release |
+| 0 | Sub | 20–120 Hz | 2 × MBC Attack | 2 × MBC Release (max 5000 ms) |
 | 1 | Bass | 120–400 Hz | MBC Attack | MBC Release |
 | 2 | Low-Mid | 400–1200 Hz | MBC Attack | MBC Release |
 | 3 | High-Mid | 1200–3500 Hz | MBC Attack | MBC Release |
@@ -196,14 +196,34 @@ bands back together.
 | 5 | Air | 8000–20000 Hz | MBC Attack | MBC Release |
 
 **Attack / Release are user parameters** (`mbc_attack` 1–100 ms, default 15; `mbc_release`
-20–1000 ms, default 200). They replaced the old Slow/Normal/Fast "MBC Speed" preset (§8). The
+20–5000 ms, default 200 — the range went up from 1000 ms on 2026-10-09). They replaced the old Slow/Normal/Fast "MBC Speed" preset (§8). The
 defaults equal the old Normal preset, so a session that never touches them sounds as before. The
 Sub band keeps its long-standing 2× factor (30 ms / 400 ms at the defaults) — broadcast chains
-run the bass slower. Changing them while audio runs only swaps filter coefficients: the
+run the bass slower — with its release capped at 5000 ms, so from 2500 ms up it runs at the same
+5000 ms as the other bands. Changing them while audio runs only swaps filter coefficients: the
 envelopes keep going, so turning the knob never snaps the gain reduction to zero
 (`testMbcLiveBallisticsChange`). **This is a completely different control from the AGC's
 "Slew Speed"** (§3.3, §4) — it only affects how quickly each band's compressor reacts, not how
 fast the overall gain rider moves.
+
+**Release mode — Manual / Auto (`mbc_release_mode`, default Manual).** Manual is the single
+envelope described above, bit-identical to v2.2.0. Auto is a program-dependent (dual-envelope)
+release: each band also runs a *slow* envelope on the same detector level — attack 300 ms (Sub
+600 ms), release 10 × the band's release (capped at 5000 ms) — and the gain follows whichever
+envelope is higher. A short hit barely charges the slow envelope, so it recovers at the Release
+time exactly as Manual; sustained compression charges both, so when it stops the gain comes back
+on the slow release instead of pumping; on steady material both read the same level, so the
+amount of compression is unchanged. Measured on a 700 Hz tone, Release 200 ms
+(`testMbcLongReleaseAndAutoRelease`):
+
+| | 200 ms after a 10 ms hit | 500 ms after 3 s of loud | GR at the end of 3 s of loud |
+|---|---|---|---|
+| Manual | −2.13 dB | −0.68 dB | −13.89 dB |
+| Auto | −2.13 dB | −12.03 dB | −13.89 dB |
+
+The slow envelope is tracked in Manual too, so switching to Auto never starts from a stale value;
+switching back carries the combined level into the normal envelope, so the gain releases from
+where it was (largest GR change measured: 0.03 dB per ms).
 
 **Level detector — Peak <-> RMS (`mbc_detector`, 0..1, default 0 = Peak).** Each band's detector
 is a blend: `level = (1 − m)·peak + m·rms`, where `peak` is the stereo-linked `max(|L|,|R|)` and
@@ -406,7 +426,8 @@ state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
 | `tone_slope` | Tone Slope ("Tone Tilt") | Float | −3.0 to 0.0 dB/oct (0.1 step) | −1.5 dB/oct | `MultibandCompressor` threshold tilt |
 | `target_profile` | Target Profile | Choice | Pink Noise (Linear) / Modern Mix (Contoured) | Modern Mix | `MultibandCompressor` threshold contour. Note: `TargetProfile::CUSTOM` exists in the DSP enum but has no 3rd UI choice — unreachable from the plugin |
 | `mbc_attack` | MBC Attack | Float | 1 to 100 ms (log-skewed, 15 ms at centre of travel) | 15 ms | `MultibandCompressor` attack, bands 1–5 (Sub runs at 2×) — §3.5. Added 2026-10-08, replaces `mbc_speed` |
-| `mbc_release` | MBC Release | Float | 20 to 1000 ms (log-skewed, 200 ms at centre) | 200 ms | `MultibandCompressor` release, bands 1–5 (Sub runs at 2×). Added 2026-10-08 |
+| `mbc_release` | MBC Release | Float | 20 to 5000 ms (log-skewed, 200 ms at centre) | 200 ms | `MultibandCompressor` release, bands 1–5 (Sub runs at 2×, max 5000). Added 2026-10-08; max raised from 1000 ms 2026-10-09 |
+| `mbc_release_mode` | Release (Tone Shaper header) | Choice | Manual / Auto | Manual | `MultibandCompressor` single vs program-dependent release — §3.5. Added 2026-10-09 |
 | `mbc_detector` | Detector | Float | 0 (Peak) to 1 (RMS), 0.01 step | 0 = Peak | `MultibandCompressor` level-detector blend — §3.5. Added 2026-10-08 |
 | `eq_sub` … `eq_air` | EQ Sub / Bass / Low-Mid / High-Mid / Presence / Air | Float ×6 | −12 to +12 dB (0.1 step) | 0 dB | `BandEQ` band gains — §3.5.2. Added 2026-10-08 |
 | `eq_position` | EQ Position | Choice | Before MBC / After MBC | After MBC | Where `BandEQ` sits relative to the MBC. Added 2026-10-08 |
@@ -484,10 +505,11 @@ CI (`.github/workflows/build-and-release.yml`) builds macOS (Universal VST3/AU/S
 Windows x64/x86 (VST3/Standalone) on every version tag push or manual dispatch, runs `dsp_test`
 on each platform, and publishes a GitHub Release with zipped artifacts per platform.
 
-The test suite (`tests/dsp_test.cpp`, 28 tests) exercises `AutoLevelEngine` and every DSP
+The test suite (`tests/dsp_test.cpp`, 29 tests) exercises `AutoLevelEngine` and every DSP
 submodule directly — K-weighting calibration, tone-profile thresholds, LR4 crossover flatness,
 EBU R128 loudness accuracy across levels, MBC attack/release (including a regression test that
-`prepare()` doesn't leave stale cached ballistics) and the Peak/RMS detector, the Band EQ
+`prepare()` doesn't leave stale cached ballistics), the 5000 ms release range and auto release,
+and the Peak/RMS detector, the Band EQ
 (bit-exact flat, per-band accuracy, smoothing, pre/post routing), the lookahead limiter
 (exact latency, THD, ceiling, true peak, live switching, bypass latency), breakdown-freeze
 sensitivity, NaN/Inf sanitization, and the lock-free visual-state buffer. It does **not**
@@ -512,6 +534,19 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ---
 
 ## 8. Changelog
+
+### 2026-10-09 — MBC auto release; release range up to 5000 ms
+
+- `mbc_release` range 20–1000 → **20–5000 ms**. Still log-skewed with 200 ms at the centre of
+  travel, so the default sits where it did; but the knob's travel above the centre now spans to
+  5000, so **host automation recorded on this parameter in v2.2.0 maps to different values**
+  (automation is stored normalised). Sub band's 2× is now capped at 5000 ms. Values up to
+  1000 ms behave exactly as before.
+- New `mbc_release_mode` (Manual / Auto, default Manual) and a RELEASE: MANUAL / AUTO switch in
+  the Tone Shaper header where the Air Lift buttons used to be — §3.5.
+- Manual mode bit-identical to v2.2.0 (compressor output compared sample for sample at 37, 200
+  and 1000 ms release). New `testMbcLongReleaseAndAutoRelease`; 29 tests pass. JUCE build clean,
+  Standalone inspected.
 
 ### 2026-10-08 (later) — Lookahead limiter, selectable Off / 1 ms / 2 ms
 
