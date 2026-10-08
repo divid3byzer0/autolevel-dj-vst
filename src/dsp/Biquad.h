@@ -48,6 +48,16 @@ public:
         reset();
     }
 
+    /**
+     * Install arbitrary normalised coefficients (a0 = 1) without touching the filter state, so a
+     * filter can be retuned while audio runs. Used by the Band EQ, whose gains move continuously.
+     */
+    void setCoefficients(double b0, double b1, double b2, double a1, double a2) noexcept {
+        m_b = {b0, b1, b2};
+        m_a[1] = a1;
+        m_a[2] = a2;
+    }
+
     void reset() {
         m_z1 = 0.0;
         m_z2 = 0.0;

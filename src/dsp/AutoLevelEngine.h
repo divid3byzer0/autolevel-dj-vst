@@ -2,9 +2,9 @@
 
 #include "LoudnessMeter.h"
 #include "Leveler.h"
-#include "DynamicAirLift.h"
 #include "HighPassFilter.h"
 #include "MultibandCompressor.h"
+#include "BandEQ.h"
 #include "SafetyLimiter.h"
 #include <atomic>
 #include <array>
@@ -13,9 +13,6 @@
 #include <algorithm>
 
 namespace autolevel::dsp {
-
-// Backward-compatible type alias for existing codebase & tests
-using AirWeight = AirLiftMode;
 
 struct EngineParameters {
     float targetLUFS = -14.0f;
@@ -28,17 +25,21 @@ struct EngineParameters {
     float toneSlopeDbPerOctave = -1.5f; // -3.0 to 0.0 dB/oct
     TargetProfile targetProfile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = Bands::MODERN_CONTOUR_DB;
-    MBCSpeed mbcSpeed = MBCSpeed::NORMAL;
-    AirLiftMode airLift = AirLiftMode::OFF;
-    // Backward compatibility alias
-    AirWeight airWeight = AirWeight::OFF;
     float compressionAmount = 0.5f; // 0..1 slider
+    float mbcAttackMs = 15.0f;      // 1 to 100 ms (Sub band runs at 2x)
+    float mbcReleaseMs = 200.0f;    // 20 to 1000 ms (Sub band runs at 2x)
+    float mbcDetectorRms = 0.0f;    // 0 = peak detector, 1 = RMS detector, between = blend
     /** Ratio at compressionAmount = 1.0. Default 4:1 — the plugin's long-standing behaviour. */
     float maxCompressionRatio = Bands::MAX_RATIO;
     float postMbcGainDb = 0.0f;     // -12 to +12 dB
+    /** Band EQ gains in dB (+/-12), in Bands order: Sub, Bass, Low-Mid, High-Mid, Presence, Air. */
+    std::array<float, Bands::COUNT> eqGainsDb{};
+    EqPosition eqPosition = EqPosition::POST_MBC;
     float hpfCutoffHz = 30.0f;      // 20 to 50 Hz low-cut filter
     bool hpfEnabled = true;
     float ceilingDb = -0.3f;        // -0.3 dBFS default master ceiling
+    /** Safety Limiter lookahead. OFF = the original zero-latency limiter; 1/2 ms add that much latency. */
+    LimiterLookahead limiterLookahead = LimiterLookahead::OFF;
     bool bypass = false;
 };
 
@@ -56,12 +57,6 @@ struct EngineVisualState {
     float activeHalfLifeSeconds = 0.0f;
     TargetProfile activeProfile = TargetProfile::MODERN_MIX;
     LevelerSpeed activeSlewSpeed = LevelerSpeed::NORMAL;
-    MBCSpeed activeMbcSpeed = MBCSpeed::NORMAL;
-    AirLiftMode activeAirLift = AirLiftMode::OFF;
-    float airLiftDb = 0.0f;
-    // Compatibility field for UI meters
-    AirWeight activeAirWeight = AirWeight::OFF;
-    float airInjectedLevel = 0.0f;
     float activeToneSlope = -2.0f;
     float postMbcGainDb = 0.0f;
     float hpfCutoffHz = 30.0f;
@@ -76,8 +71,8 @@ public:
         m_sampleRate = sampleRate;
         m_loudnessMeter.prepare(sampleRate);
         m_leveler.prepare(sampleRate);
-        m_airLift.prepare(sampleRate);
         m_mbc.prepare(sampleRate);
+        m_eq.prepare(sampleRate);
         m_hpf.prepare(sampleRate);
         m_limiter.prepare(sampleRate);
         resetImmediate();
@@ -118,8 +113,23 @@ public:
     }
 
     /**
-     * Exact chain: AGC -> Air Lift -> Multiband Compressor (MBC) -> Post-Gain -> HPF (Low Cut) -> Limiter
+     * Exact chain: AGC -> [EQ] -> Multiband Compressor (MBC) -> [EQ] -> Post-Gain -> HPF (Low Cut) -> Limiter
+     * The Band EQ runs at exactly one of the two bracketed spots, chosen by params.eqPosition.
      */
+    /** Latency the engine adds for a given lookahead setting, in samples (all of it from the limiter). */
+    static int latencySamples(LimiterLookahead lookahead, double sampleRate) noexcept {
+        return SafetyLimiter::lookaheadSamples(lookahead, sampleRate);
+    }
+
+    /**
+     * Host-bypass path: audio is untouched except for the limiter's lookahead delay, so a
+     * bypassed plugin stays time-aligned with the latency it reports.
+     */
+    void processBypassed(float* left, float* right, size_t numSamples, LimiterLookahead lookahead) {
+        m_limiter.setLookahead(lookahead);
+        m_limiter.processDelayOnly(left, right, numSamples);
+    }
+
     void process(float* left, float* right, size_t numSamples, const EngineParameters& params) {
         // Serviced before the bypass early-out so a reset requested while bypassed
         // is not left pending indefinitely.
@@ -134,6 +144,9 @@ public:
         }
 
         if (params.bypass || numSamples == 0) {
+            // Still delayed by the lookahead (a no-op when it is OFF), so toggling bypass never
+            // shifts the audio in time against the latency reported to the host.
+            processBypassed(left, right, numSamples, params.limiterLookahead);
             return;
         }
 
@@ -168,15 +181,19 @@ public:
         // 3. Stage 1: AGC Makeup Gain applied to audio
         m_leveler.processBlock(left, right, numSamples);
 
-        // 3.5. Stage 1.5: Dynamic Air Lift (> 9.5 kHz, 100% distortion-free)
-        AirLiftMode effAir = (params.airLift != AirLiftMode::OFF) ? params.airLift : params.airWeight;
-        m_airLift.process(left, right, numSamples, effAir);
+        // 4. Stage 2: Band EQ (pre-MBC position) -> 6-band Multiband Dynamic Tone Shaper
+        //    (thresholds linked to tone curve & profile) -> Band EQ (post-MBC position)
+        if (params.eqPosition == EqPosition::PRE_MBC) {
+            m_eq.process(left, right, numSamples, params.eqGainsDb);
+        }
 
-        // 4. Stage 2: 6-band Multiband Dynamic Tone Shaper (thresholds linked to tone curve & profile)
         MBCParams mbcParams;
         mbcParams.enabled = (params.compressionAmount >= Bands::MIN_COMPRESSION);
         mbcParams.compressionAmount = params.compressionAmount;
         mbcParams.maxRatio = params.maxCompressionRatio;
+        mbcParams.attackMs = params.mbcAttackMs;
+        mbcParams.releaseMs = params.mbcReleaseMs;
+        mbcParams.detectorRmsMix = params.mbcDetectorRms;
         mbcParams.toneSlopeDbPerOctave = params.toneSlopeDbPerOctave;
         mbcParams.profile = params.targetProfile;
         mbcParams.customOffsetsDb = params.customOffsetsDb;
@@ -185,8 +202,11 @@ public:
         // -24 dBFS (Bands::MBC_THRESHOLD_DB, "exactly matching Android Shaper.kt") is only
         // reached if the user manually sets Target LUFS back to the old -9 dBFS default.
         mbcParams.baseThresholdDb = params.targetLUFS - 15.0f;
-        mbcParams.speed = params.mbcSpeed;
         m_mbc.process(left, right, numSamples, mbcParams);
+
+        if (params.eqPosition == EqPosition::POST_MBC) {
+            m_eq.process(left, right, numSamples, params.eqGainsDb);
+        }
 
         // 5. Stage 3: Post-MBC Gain stage (makeup/trim before safety limiter)
         if (std::abs(params.postMbcGainDb) > 0.01f) {
@@ -202,8 +222,9 @@ public:
         m_hpf.setCutoff(params.hpfCutoffHz, params.hpfEnabled);
         m_hpf.process(left, right, numSamples);
 
-        // 6. Stage 4: Safety Limiter (1ms attack, 60ms release, 20:1 ratio)
+        // 6. Stage 4: Safety Limiter (OFF: 1ms attack, 60ms release, 20:1 ratio; or 1/2 ms lookahead brickwall)
         m_limiter.setCeilingDb(params.ceilingDb);
+        m_limiter.setLookahead(params.limiterLookahead);
         m_limiter.process(left, right, numSamples);
 
         // 6.5. Track master output peak (linear with decay for smooth visual metering)
@@ -242,12 +263,6 @@ public:
         vs.activeHalfLifeSeconds = m_loudnessMeter.getHalfLifeSeconds();
         vs.activeProfile = params.targetProfile;
         vs.activeSlewSpeed = params.slewSpeed;
-        vs.activeMbcSpeed = params.mbcSpeed;
-        vs.activeAirLift = effAir;
-        vs.airLiftDb = m_airLift.getLiftDb();
-        // UI compatibility
-        vs.activeAirWeight = effAir;
-        vs.airInjectedLevel = m_airLift.getLiftDb() / 6.5f * 0.25f; // scale to 0..0.25 for LED rack
         vs.activeToneSlope = params.toneSlopeDbPerOctave;
         vs.postMbcGainDb = params.postMbcGainDb;
         vs.hpfCutoffHz = m_hpf.getCutoffHz();
@@ -267,8 +282,8 @@ private:
     void doReset() {
         m_loudnessMeter.reset();
         m_leveler.reset();
-        m_airLift.reset();
         m_mbc.reset();
+        m_eq.reset();
         m_hpf.reset();
         m_limiter.reset();
         m_outPeakLinL = 0.0f;
@@ -281,8 +296,8 @@ private:
     double m_sampleRate = 48000.0;
     LoudnessMeter m_loudnessMeter;
     Leveler m_leveler;
-    DynamicAirLift m_airLift;
     MultibandCompressor m_mbc;
+    BandEQ m_eq;
     HighPassFilter m_hpf;
     SafetyLimiter m_limiter;
 

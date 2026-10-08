@@ -1,18 +1,12 @@
 #pragma once
 
 #include "Bands.h"
-#include "Biquad.h"
+#include "BandSplitter.h"
 #include <array>
 #include <cmath>
 #include <algorithm>
 
 namespace autolevel::dsp {
-
-enum class MBCSpeed {
-    SLOW,
-    NORMAL,
-    FAST
-};
 
 struct MBCParams {
     bool enabled = true;
@@ -26,7 +20,11 @@ struct MBCParams {
     TargetProfile profile = TargetProfile::MODERN_MIX;
     std::array<float, Bands::COUNT> customOffsetsDb = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     float baseThresholdDb = Bands::MBC_THRESHOLD_DB;
-    MBCSpeed speed = MBCSpeed::NORMAL;
+    /** Attack / release of bands 1-5 in ms. The Sub band runs at twice both (see SUB_TIME_SCALE). */
+    float attackMs = 15.0f;
+    float releaseMs = 200.0f;
+    /** Level detector: 0.0 = pure peak, 1.0 = pure RMS, in between blends the two. */
+    float detectorRmsMix = 0.0f;
 };
 
 class BandCompressor {
@@ -35,6 +33,7 @@ public:
 
     void setup(double sampleRate, float attackMs, float releaseMs) {
         m_sampleRate = sampleRate;
+        m_rmsCoeff = std::exp(-1.0 / (m_sampleRate * RMS_WINDOW_SECONDS));
         updateBallistics(attackMs, releaseMs);
         reset();
     }
@@ -46,24 +45,42 @@ public:
 
     void reset() {
         m_envelope = 0.0;
+        m_meanSquare = 0.0;
         m_gainReductionDb = 0.0f;
     }
 
     /**
      * Exact 6 dB soft-knee dynamics compression matching Android DynamicsProcessing MBC.
+     *
+     * rmsMix selects what the level detector sees: 0 = the stereo-linked peak, 1 = the
+     * stereo-linked RMS, anything between is a linear blend of the two. The attack / release
+     * ballistics are applied to the blended level either way.
      */
-    inline void processStereo(float& left, float& right, float thresholdDb, float ratio, float amount) noexcept {
+    inline void processStereo(float& left, float& right, float thresholdDb, float ratio, float amount,
+                              float rmsMix) noexcept {
         if (amount < Bands::MIN_COMPRESSION || ratio <= 1.001f) {
             m_gainReductionDb = 0.0f;
             return;
         }
 
-        // Stereo peak envelope detector
-        double absMax = std::max(std::abs(left), std::abs(right));
-        if (absMax > m_envelope) {
-            m_envelope = absMax + m_attackCoeff * (m_envelope - absMax);
+        // Stereo-linked peak
+        double level = std::max(std::abs(left), std::abs(right));
+
+        // Stereo-linked RMS: one-pole mean of the squared peak. Always tracked, so moving the
+        // slider off 0 never starts from a stale average; only the sqrt is skipped at 0.
+        const double peak = level;
+        m_meanSquare = peak * peak + m_rmsCoeff * (m_meanSquare - peak * peak);
+        if (rmsMix > 0.0f) {
+            // sqrt(2 * mean-square): a sine reads its peak amplitude, so the two detectors
+            // agree on a steady tone and differ only by how peaky the material is.
+            const double rms = std::sqrt(2.0 * m_meanSquare);
+            level = (1.0 - rmsMix) * peak + rmsMix * rms;
+        }
+
+        if (level > m_envelope) {
+            m_envelope = level + m_attackCoeff * (m_envelope - level);
         } else {
-            m_envelope = absMax + m_releaseCoeff * (m_envelope - absMax);
+            m_envelope = level + m_releaseCoeff * (m_envelope - level);
         }
 
         double envDb = (m_envelope > 1e-6) ? 20.0 * std::log10(m_envelope) : -120.0;
@@ -98,101 +115,57 @@ public:
     }
 
 private:
+    /** Averaging window of the RMS detector. */
+    static constexpr double RMS_WINDOW_SECONDS = 0.030;
+
     double m_sampleRate = 48000.0;
     double m_attackCoeff = 0.0;
     double m_releaseCoeff = 0.0;
+    double m_rmsCoeff = 0.0;
     double m_envelope = 0.0;
+    double m_meanSquare = 0.0;
     float m_gainReductionDb = 0.0f;
 };
 
 /**
  * 6-band Linkwitz-Riley (LR4) crossover filterbank and dynamic compressor.
- * Attack/Release times and thresholds exactly mirror Android GainProcessor & Shaper:
- * - Band 0 (Sub, < 120 Hz): Attack = 30 ms, Release = 400 ms
- * - Bands 1-5: Attack = 15 ms, Release = 200 ms
+ * Attack/Release are user-set; the defaults mirror Android GainProcessor:
+ * - Band 0 (Sub, < 120 Hz): twice the chosen times (default 30 ms / 400 ms)
+ * - Bands 1-5: the chosen times (default 15 ms / 200 ms)
  * - Knee width: 6 dB
  */
 class MultibandCompressor {
 public:
     MultibandCompressor() = default;
 
+    /** Sub band is slower than the rest by this factor, as broadcast chains do. */
+    static constexpr float SUB_TIME_SCALE = 2.0f;
+
+    static constexpr float MIN_ATTACK_MS = 1.0f;
+    static constexpr float MAX_ATTACK_MS = 100.0f;
+    static constexpr float MIN_RELEASE_MS = 20.0f;
+    static constexpr float MAX_RELEASE_MS = 1000.0f;
+
     void prepare(double sampleRate) {
         m_sampleRate = sampleRate;
+        m_splitter.prepare(sampleRate);
 
-        // Setup crossovers at: 120, 400, 1200, 3500, 8000 Hz
-        for (size_t ch = 0; ch < 2; ++ch) {
-            for (size_t i = 0; i < 5; ++i) {
-                m_lp[ch][i].setup(Biquad::Type::LowPass, Bands::CROSSOVERS[i], sampleRate);
-                m_hp[ch][i].setup(Biquad::Type::HighPass, Bands::CROSSOVERS[i], sampleRate);
-            }
-        }
-
-        // Phase-compensation allpasses (see AP_COMPENSATION below)
-        for (size_t ch = 0; ch < 2; ++ch) {
-            for (size_t b = 0; b < Bands::COUNT; ++b) {
-                for (size_t k = 0; k < AP_MAX; ++k) {
-                    int xover = AP_COMPENSATION[b][k];
-                    if (xover >= 0) {
-                        m_ap[ch][b][k].setup(Bands::CROSSOVERS[static_cast<size_t>(xover)], sampleRate);
-                    }
-                }
-            }
-        }
-
-        // Exact ballistics from Android GainProcessor.kt:
-        // Band 0: attack 30ms, release 400ms (slower in bass as broadcast chains do)
-        // Bands 1-5: attack 15ms, release 200ms
-        m_bands[0].setup(sampleRate, 30.0f, 400.0f);
+        // setup() installs the sample rate and default ballistics; the cached times must
+        // match it, or a later process() with the same times would skip a needed update.
+        m_attackMs = DEFAULT_ATTACK_MS;
+        m_releaseMs = DEFAULT_RELEASE_MS;
+        m_bands[0].setup(sampleRate, m_attackMs * SUB_TIME_SCALE, m_releaseMs * SUB_TIME_SCALE);
         for (size_t b = 1; b < Bands::COUNT; ++b) {
-            m_bands[b].setup(sampleRate, 15.0f, 200.0f);
+            m_bands[b].setup(sampleRate, m_attackMs, m_releaseMs);
         }
-        // setup() above reinstalls NORMAL ballistics, so forget the cached speed;
-        // otherwise updateSpeed() early-returns and a selected Slow/Fast silently
-        // reverts to Normal after any prepare() (e.g. a JACK sample-rate change).
-        m_currentSpeed = MBCSpeed::NORMAL;
 
         reset();
     }
 
     void reset() {
-        for (size_t ch = 0; ch < 2; ++ch) {
-            for (size_t i = 0; i < 5; ++i) {
-                m_lp[ch][i].reset();
-                m_hp[ch][i].reset();
-            }
-            for (size_t b = 0; b < Bands::COUNT; ++b) {
-                for (size_t k = 0; k < AP_MAX; ++k) m_ap[ch][b][k].reset();
-            }
-        }
+        m_splitter.reset();
         for (size_t b = 0; b < Bands::COUNT; ++b) {
             m_bands[b].reset();
-        }
-    }
-
-    void updateSpeed(MBCSpeed speed) {
-        if (speed == m_currentSpeed) return;
-        m_currentSpeed = speed;
-
-        float subAttack = 30.0f;
-        float subRelease = 400.0f;
-        float otherAttack = 15.0f;
-        float otherRelease = 200.0f;
-
-        if (speed == MBCSpeed::SLOW) {
-            subAttack = 60.0f;
-            subRelease = 800.0f;
-            otherAttack = 30.0f;
-            otherRelease = 400.0f;
-        } else if (speed == MBCSpeed::FAST) {
-            subAttack = 15.0f;
-            subRelease = 200.0f;
-            otherAttack = 7.5f;
-            otherRelease = 100.0f;
-        }
-
-        m_bands[0].updateBallistics(subAttack, subRelease);
-        for (size_t b = 1; b < Bands::COUNT; ++b) {
-            m_bands[b].updateBallistics(otherAttack, otherRelease);
         }
     }
 
@@ -204,7 +177,7 @@ public:
             return;
         }
 
-        updateSpeed(params.speed);
+        updateBallistics(params.attackMs, params.releaseMs);
 
         // Calculate thresholds per band using exact Android Shaper formula
         std::array<float, Bands::COUNT> thresholds = Bands::thresholdsFor(
@@ -214,6 +187,7 @@ public:
         // Compression ratio: 1.0 up to params.maxRatio (Bands::MAX_RATIO = 4.0 by default,
         // matching Android Shaper.kt).
         float ratio = 1.0f + params.compressionAmount * (params.maxRatio - 1.0f);
+        float rmsMix = std::clamp(params.detectorRmsMix, 0.0f, 1.0f);
 
         // No makeup gain here: the MBC's output level is set by hand with the Post-MBC Gain
         // stage that follows it (auto-makeup was removed 2026-09-29, as in autolevel-box).
@@ -221,14 +195,15 @@ public:
             std::array<float, Bands::COUNT> bandL;
             std::array<float, Bands::COUNT> bandR;
 
-            split6Bands(0, left[s], bandL);
-            split6Bands(1, right[s], bandR);
+            m_splitter.split(0, left[s], bandL);
+            m_splitter.split(1, right[s], bandR);
 
             float outL = 0.0f;
             float outR = 0.0f;
 
             for (size_t b = 0; b < Bands::COUNT; ++b) {
-                m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio, params.compressionAmount);
+                m_bands[b].processStereo(bandL[b], bandR[b], thresholds[b], ratio,
+                                         params.compressionAmount, rmsMix);
                 outL += bandL[b];
                 outR += bandR[b];
             }
@@ -247,78 +222,32 @@ public:
     }
 
 private:
-    inline void split6Bands(size_t ch, float in, std::array<float, Bands::COUNT>& outBands) noexcept {
-        // Crossover 2 (1200 Hz): Split into Low (< 1200 Hz) and High (> 1200 Hz)
-        double low1200 = m_lp[ch][2].process(in);
-        double high1200 = m_hp[ch][2].process(in);
+    static constexpr float DEFAULT_ATTACK_MS = 15.0f;
+    static constexpr float DEFAULT_RELEASE_MS = 200.0f;
 
-        // Low branch: Split at Crossover 1 (400 Hz)
-        double low400 = m_lp[ch][1].process(low1200);
-        double high400 = m_hp[ch][1].process(low1200);
-
-        // Sub branch: Split low400 at Crossover 0 (120 Hz)
-        outBands[0] = static_cast<float>(m_lp[ch][0].process(low400)); // Sub (< 120)
-        outBands[1] = static_cast<float>(m_hp[ch][0].process(low400)); // Bass (120 - 400)
-        outBands[2] = static_cast<float>(high400);                     // Low-Mid (400 - 1200)
-
-        // High branch: Split at Crossover 3 (3500 Hz)
-        double low3500 = m_lp[ch][3].process(high1200);
-        double high3500 = m_hp[ch][3].process(high1200);
-
-        outBands[3] = static_cast<float>(low3500);                     // High-Mid (1200 - 3500)
-
-        // HighHigh branch: Split at Crossover 4 (8000 Hz)
-        outBands[4] = static_cast<float>(m_lp[ch][4].process(high3500)); // Presence (3500 - 8000)
-        outBands[5] = static_cast<float>(m_hp[ch][4].process(high3500)); // Air (> 8000)
-
-        // Phase-align the bands so they reconstruct flat when summed. Each band
-        // is passed through the allpasses of the splits its own path skipped;
-        // this leaves every band's magnitude response untouched (so the per-band
-        // thresholds keep their calibration) and only corrects the summation.
-        for (size_t b = 0; b < Bands::COUNT; ++b) {
-            double v = static_cast<double>(outBands[b]);
-            for (size_t k = 0; k < AP_MAX; ++k) {
-                if (AP_COMPENSATION[b][k] < 0) break;
-                v = m_ap[ch][b][k].process(v);
-            }
-            outBands[b] = static_cast<float>(v);
+    /**
+     * Install new times only when they changed - this runs once per block. Swaps the
+     * coefficients only: the envelopes keep running, so turning the knob during playback
+     * does not snap the gain reduction back to zero.
+     */
+    void updateBallistics(float attackMs, float releaseMs) {
+        attackMs = std::clamp(attackMs, MIN_ATTACK_MS, MAX_ATTACK_MS);
+        releaseMs = std::clamp(releaseMs, MIN_RELEASE_MS, MAX_RELEASE_MS);
+        if (std::abs(attackMs - m_attackMs) < 1e-6f && std::abs(releaseMs - m_releaseMs) < 1e-6f) return;
+        m_attackMs = attackMs;
+        m_releaseMs = releaseMs;
+        m_bands[0].updateBallistics(attackMs * SUB_TIME_SCALE, releaseMs * SUB_TIME_SCALE);
+        for (size_t b = 1; b < Bands::COUNT; ++b) {
+            m_bands[b].updateBallistics(attackMs, releaseMs);
         }
     }
 
-    /**
-     * Which crossovers each band must be allpass-corrected by, as indices into
-     * Bands::CROSSOVERS = {120, 400, 1200, 3500, 8000}; -1 terminates the list.
-     *
-     * The tree splits at 1200 first, then 400 and 120 down the low branch and
-     * 3500 and 8000 down the high branch. Writing L for the 1200 low branch and
-     * H for the high one, and using LP+HP = AP at each split:
-     *
-     *   bands 0+1 already sum to LP1200*LP400*AP120, so band 2 (LP1200*HP400)
-     *   needs AP120 to let the 400 split close:  L = LP1200*AP120*AP400
-     *   bands 4+5 already sum to HP1200*HP3500*AP8000, so band 3 needs AP8000:
-     *                                            H = HP1200*AP8000*AP3500
-     *   L and H now carry different allpasses, so the 1200 split cannot close.
-     *   Give L the high branch's pair and H the low branch's pair, and the whole
-     *   sum collapses to AP120*AP400*AP3500*AP8000*AP1200 - flat magnitude.
-     */
-    static constexpr size_t AP_MAX = 3;
-    static constexpr int AP_COMPENSATION[Bands::COUNT][AP_MAX] = {
-        { 3,  4, -1 },   // Sub       : cross-branch AP3500, AP8000
-        { 3,  4, -1 },   // Bass      : cross-branch AP3500, AP8000
-        { 0,  3,  4 },   // Low-Mid   : intra AP120 + cross-branch AP3500, AP8000
-        { 4,  0,  1 },   // High-Mid  : intra AP8000 + cross-branch AP120, AP400
-        { 0,  1, -1 },   // Presence  : cross-branch AP120, AP400
-        { 0,  1, -1 }    // Air       : cross-branch AP120, AP400
-    };
-
     double m_sampleRate = 48000.0;
+    float m_attackMs = DEFAULT_ATTACK_MS;
+    float m_releaseMs = DEFAULT_RELEASE_MS;
 
-    std::array<std::array<LR4Filter, 5>, 2> m_lp;
-    std::array<std::array<LR4Filter, 5>, 2> m_hp;
-    std::array<std::array<std::array<AllpassLR4, AP_MAX>, Bands::COUNT>, 2> m_ap;
-
+    BandSplitter m_splitter;
     std::array<BandCompressor, Bands::COUNT> m_bands;
-    MBCSpeed m_currentSpeed = MBCSpeed::NORMAL;
 };
 
 } // namespace autolevel::dsp

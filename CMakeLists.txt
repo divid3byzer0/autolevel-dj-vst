@@ -46,6 +46,8 @@ target_sources(AutoLevelDJ PRIVATE
     src/dsp/Leveler.h
     src/dsp/Bands.h
     src/dsp/Biquad.h
+    src/dsp/BandSplitter.h
+    src/dsp/BandEQ.h
     src/dsp/MultibandCompressor.h
     src/dsp/SafetyLimiter.h
     src/dsp/AutoLevelEngine.h

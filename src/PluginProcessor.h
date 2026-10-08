@@ -3,8 +3,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include "dsp/AutoLevelEngine.h"
+#include <array>
 
-class AutoLevelDJAudioProcessor : public juce::AudioProcessor {
+class AutoLevelDJAudioProcessor : public juce::AudioProcessor, private juce::AsyncUpdater {
 public:
     AutoLevelDJAudioProcessor();
     ~AutoLevelDJAudioProcessor() override = default;
@@ -16,6 +17,8 @@ public:
 
     using juce::AudioProcessor::processBlock;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using juce::AudioProcessor::processBlockBypassed;
+    void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
@@ -51,15 +54,27 @@ public:
     static constexpr const char* ID_COMPRESSION_AMOUNT = "compression_amount";
     static constexpr const char* ID_TONE_SLOPE = "tone_slope";
     static constexpr const char* ID_TARGET_PROFILE = "target_profile";
-    static constexpr const char* ID_MBC_SPEED = "mbc_speed";
-    static constexpr const char* ID_AIR_EXCITER = "air_exciter";
+    static constexpr const char* ID_MBC_ATTACK = "mbc_attack";
+    static constexpr const char* ID_MBC_RELEASE = "mbc_release";
+    static constexpr const char* ID_MBC_DETECTOR = "mbc_detector";
+    static constexpr const char* ID_EQ_POSITION = "eq_position";
+    static constexpr const char* ID_LIMITER_LOOKAHEAD = "limiter_lookahead";
     static constexpr const char* ID_POST_MBC_GAIN = "post_mbc_gain";
     static constexpr const char* ID_HPF_FREQ = "hpf_freq";
     static constexpr const char* ID_CEILING_DB = "ceiling_db";
     static constexpr const char* ID_FREEZE_BREAKDOWNS = "freeze_breakdowns";
     static constexpr const char* ID_BYPASS = "bypass";
 
+    /** Band EQ gain parameter IDs, in autolevel::dsp::Bands order (Sub ... Air). */
+    static constexpr std::array<const char*, autolevel::dsp::Bands::COUNT> ID_EQ_BANDS = {
+        "eq_sub", "eq_bass", "eq_lowmid", "eq_highmid", "eq_presence", "eq_air"
+    };
+
 private:
+    autolevel::dsp::LimiterLookahead currentLookahead() const noexcept;
+    /** Reports the latency for the current lookahead; runs on the message thread. */
+    void handleAsyncUpdate() override;
+
     juce::AudioProcessorValueTreeState m_apvts;
     autolevel::dsp::AutoLevelEngine m_engine;
 
@@ -72,8 +87,15 @@ private:
     std::atomic<float>* m_compressionAmountParam = nullptr;
     std::atomic<float>* m_toneSlopeParam = nullptr;
     std::atomic<float>* m_targetProfileParam = nullptr;
-    std::atomic<float>* m_mbcSpeedParam = nullptr;
-    std::atomic<float>* m_airExciterParam = nullptr;
+    std::atomic<float>* m_mbcAttackParam = nullptr;
+    std::atomic<float>* m_mbcReleaseParam = nullptr;
+    std::atomic<float>* m_mbcDetectorParam = nullptr;
+    std::atomic<float>* m_eqPositionParam = nullptr;
+    std::atomic<float>* m_lookaheadParam = nullptr;
+    std::atomic<double> m_sampleRate{48000.0};
+    /** Lookahead the audio thread last saw; -1 = none yet. Latency is re-reported when it changes. */
+    std::atomic<int> m_lastLookahead{-1};
+    std::array<std::atomic<float>*, autolevel::dsp::Bands::COUNT> m_eqBandParams{};
     std::atomic<float>* m_postMbcGainParam = nullptr;
     std::atomic<float>* m_hpfFreqParam = nullptr;
     std::atomic<float>* m_ceilingDbParam = nullptr;

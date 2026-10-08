@@ -50,25 +50,31 @@ Input (stereo float)
 [2] Leveler (AGC) — computes target gain from (targetLUFS - integratedLUFS), clamped to
   │     [-maxCutDb, +maxBoostDb], asymmetric slew-rate limited, with breakdown-freeze
   ▼
-[3] DynamicAirLift — dynamic high-shelf upward expansion (> 6.5 kHz) + sibilance ducking
+[3] BandEQ  (only when "EQ Position" = Before MBC)
   ▼
 [4] MultibandCompressor (MBC) — 6-band Linkwitz-Riley crossover, per-band soft-knee
-  │     compression, phase-corrected recombination (no makeup gain — see [5])
+  │     compression (user attack/release, Peak<->RMS detector, thresholds on the tonal
+  │     target curve), phase-corrected recombination (no makeup gain — see [5])
+  ▼
+[4b] BandEQ  (only when "EQ Position" = After MBC, the default)
   ▼
 [5] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB; the only
   │     makeup stage for the MBC's gain reduction since auto-makeup was removed (2026-09-29)
   ▼
 [6] HighPassFilter — 4th-order (24 dB/oct) Butterworth low cut, 20–50 Hz
   ▼
-[7] SafetyLimiter — 1ms attack / 60ms release, 20:1 ratio, plus a hard sample clamp at the
-  │     ceiling as a last-resort safety net
+[7] SafetyLimiter — "Lookahead" Off: 1ms attack / 60ms release, 20:1 ratio, plus a hard
+  │     sample clamp at the ceiling (zero latency). 1 ms / 2 ms: lookahead true-peak-aware
+  │     brickwall that does not distort when pushed (adds exactly that much latency) — §3.8
   ▼
 Output (stereo float) → also feeds a lock-free 3-buffer "visual state" the UI thread reads at 60Hz
 ```
 
-This exact order matters: Air Lift runs *before* the MBC so the MBC can "polish" whatever
-it adds; Post-Gain and the HPF both run *after* the MBC but *before* the limiter, so manual
-trim and subsonic cleanup are still caught by the final safety stage.
+This exact order matters: Post-Gain and the HPF both run *after* the MBC but *before* the
+limiter, so manual trim and subsonic cleanup are still caught by the final safety stage. The
+Band EQ runs at exactly one of its two spots ([3] or [4b]), chosen by the "EQ Position" switch —
+always after the AGC, always before Post Gain and the limiter. (Stage [3] used to be the
+DynamicAirLift, removed 2026-10-08 — §3.4.)
 
 ### Why the DSP core has no JUCE dependency
 
@@ -143,8 +149,8 @@ audible pumping on transitions). The **"Slew Speed"** parameter (`LevelerParams:
 `LevelerSpeed::{SLOW,NORMAL,FAST}`) only affects the *steady-state* rate — the 8-second
 "fast lock" window after `reset()` always uses its own fixed 4.0/16.0 dB/s rates regardless of
 this setting, since fast-lock is about establishing an initial baseline quickly, a different
-concern from steady-state reactivity. This is **distinct from "MBC Speed"** (§3.5), which
-governs the multiband compressor's per-band ballistics, not the AGC gain rider. It's also
+concern from steady-state reactivity. This is **distinct from "MBC Attack / Release"** (§3.5), which
+govern the multiband compressor's per-band ballistics, not the AGC gain rider. It's also
 distinct from **"Level Response"** (§3.2), which controls how fast the *measurement* (integrated
 LUFS estimate) reacts — Slew Speed controls how fast the *applied gain* chases whatever that
 measurement currently says. The "fast lock" window only starts counting once
@@ -161,72 +167,65 @@ gain into a quiet breakdown right before a drop.
 The actual gain is applied to audio via `Leveler::processBlock()`, which linearly interpolates
 the *linear* gain across the block sample-by-sample (not a step change), avoiding zipper noise.
 
-### 3.4 DynamicAirLift (`src/dsp/DynamicAirLift.h`)
+### 3.4 Dynamic Bass Lift / Air Lift — removed
 
-A "Dolby Duo"-style dynamic shelving filter — pure linear EQ (RBJ cookbook high-shelf biquad,
-S=1 slope), with the *shelf gain itself* driven dynamically by a sidechain energy-ratio
-detector, rather than any nonlinear harmonic generation.
+Both adaptive "lift" stages are gone. **Bass Lift** (`DynamicBassLift.h`, the "Sub Weight"
+control) was removed on 2026-09-11; **Air Lift** (`DynamicAirLift.h`, the "Air Exciter" /
+"AIR: OFF LOW MED HIGH" control, a sidechain-driven dynamic high shelf above ~6.5 kHz with a
+sibilance ducker) on 2026-10-08, at the owner's request. Nothing replaces them automatically;
+the manual Band EQ (§3.5.2) is the way to add bass or air now. See the changelog (§8) for what
+each removal touched and, in the 2026-09-11 entries, how Air Lift used to work.
 
-**Bass Lift (`src/dsp/DynamicBassLift.h`) was removed entirely on 2026-09-11** — deleted
-outright, not just unwired, along with every reference across `AutoLevelEngine.h`,
-`PluginProcessor.h/.cpp` (the `sub_weight`/`ID_SUB_WEIGHT` parameter and `SubWeight` alias), and
-`PluginEditor.h/.cpp` (the "Sub Weight" combo box, its four segmented buttons, and the header
-LED activity meter in the Tone Shaper card). Ported straight from the same removal in
-`autolevel-box`, which went through several redesigns of Bass Lift on the same day (shelf EQ ->
-harmonic exciter -> sub-harmonic synthesizer) before the project owner asked to drop the
-adaptive-detector approach entirely; the box replaced it with a manual Pre-MBC EQ, but that
-addition was explicitly **not** ported here — this plugin just lost Bass Lift, nothing replaces
-it. Air Lift itself was untouched by this removal; it's covered in full below.
-
-- **Air Lift**: same idea at the top end (>6.5kHz vs. a genuine ~1-3kHz bandpass mid anchor,
-  `LP(3000Hz) - LP(1000Hz)`), plus a dedicated **sibilance auto-ducker** (1ms attack / 40ms
-  release on a crest-factor detector) that pulls the lift back when a transient (a harsh "S" or
-  cymbal hit) would otherwise get boosted. **Bug fixed 2026-09-11**: the mid anchor used to be a
-  plain `LP(2000Hz)` with no subtraction — i.e. *everything below 2kHz* — which for any real
-  track vastly outweighs the air band above, so the lift read close to its ceiling almost
-  regardless of actual brightness (verified: dark/moderately-bright/very-bright synthetic
-  signals all measured 3.4-3.7 dB, essentially flat). Fixed to a real bandpass matching Bass
-  Lift's technique; re-verified on the same three signals: 3.40/1.73/0.00 dB — now properly
-  tracks brightness. See `testDynamicAirLift`'s 4th case (added in the same fix) for the
-  realistic-ratio regression test that would have caught this — the original "bright" test case
-  used a signal with *more* energy at 12kHz than at 2kHz, a ratio no real track has, extreme
-  enough to pass despite the bug.
-- Reports `getLiftDb()` for UI metering, and is fully bypassed (zero state touched, exact
-  bit-identical passthrough) when its mode is `OFF` — verified in `testDynamicAirLift`.
-- Backward-compatibility note: `EngineParameters` has *both* a newer `airLift` field and an
-  older `airWeight` field (type-aliased to the same enum, `AirWeight = AirLiftMode`). The
-  engine uses whichever is non-OFF, preferring the new field
-  (`AutoLevelEngine.h`: `effAir = (params.airLift != OFF) ? params.airLift : params.airWeight`).
-  **`PluginProcessor.cpp` only ever sets `airWeight`** (from the "Air Exciter" combo box) —
-  `airLift` is effectively a dead field in the shipped plugin, kept for any code/tests that
-  construct `EngineParameters` directly with the newer name. The equivalent `bassLift`/
-  `subWeight` pair was removed along with Bass Lift itself.
-
-### 3.5 MultibandCompressor / MBC (`src/dsp/MultibandCompressor.h`, `Bands.h`, `Biquad.h`)
+### 3.5 MultibandCompressor / MBC (`src/dsp/MultibandCompressor.h`, `BandSplitter.h`, `Bands.h`, `Biquad.h`)
 
 The most involved module. Splits the signal into 6 bands via a tree of 4th-order
-Linkwitz-Riley (LR4) crossovers at 120 / 400 / 1200 / 3500 / 8000 Hz, compresses each band
-independently (6 dB soft-knee, per-band attack/release), then sums the bands back together.
+Linkwitz-Riley (LR4) crossovers at 120 / 400 / 1200 / 3500 / 8000 Hz (the tree lives in
+`BandSplitter.h`; the Band EQ does not use it, §3.5.2),
+compresses each band independently (6 dB soft-knee, per-band attack/release), then sums the
+bands back together.
 
-**Bands:**
+**Bands and ballistics:**
 
 | # | Name | Range | Attack | Release |
 |---|---|---|---|---|
-| 0 | Sub | 20–120 Hz | 30 ms (Normal) | 400 ms (Normal) |
-| 1 | Bass | 120–400 Hz | 15 ms | 200 ms |
-| 2 | Low-Mid | 400–1200 Hz | 15 ms | 200 ms |
-| 3 | High-Mid | 1200–3500 Hz | 15 ms | 200 ms |
-| 4 | Presence | 3500–8000 Hz | 15 ms | 200 ms |
-| 5 | Air | 8000–20000 Hz | 15 ms | 200 ms |
+| 0 | Sub | 20–120 Hz | 2 × MBC Attack | 2 × MBC Release |
+| 1 | Bass | 120–400 Hz | MBC Attack | MBC Release |
+| 2 | Low-Mid | 400–1200 Hz | MBC Attack | MBC Release |
+| 3 | High-Mid | 1200–3500 Hz | MBC Attack | MBC Release |
+| 4 | Presence | 3500–8000 Hz | MBC Attack | MBC Release |
+| 5 | Air | 8000–20000 Hz | MBC Attack | MBC Release |
 
-"MBC Speed" (Slow/Normal/Fast) scales all six pairs at once: Slow doubles both times, Fast
-roughly halves them (see `MultibandCompressor::updateSpeed()`). **This is a completely
-different control from the AGC's "Slew Speed"** (§3.3, §4) — it only affects how quickly each
-band's compressor envelope reacts, not how fast the overall makeup gain rider moves. Historical
-note: the README used to document a "Slew Speed" control that, at the time, didn't actually
-exist anywhere (this MBC Speed control was the only "speed" knob that shipped) — a real,
-separate AGC Slew Speed parameter was added on 2026-09-11 (§8) specifically to make that
-documented behavior true.
+**Attack / Release are user parameters** (`mbc_attack` 1–100 ms, default 15; `mbc_release`
+20–1000 ms, default 200). They replaced the old Slow/Normal/Fast "MBC Speed" preset (§8). The
+defaults equal the old Normal preset, so a session that never touches them sounds as before. The
+Sub band keeps its long-standing 2× factor (30 ms / 400 ms at the defaults) — broadcast chains
+run the bass slower. Changing them while audio runs only swaps filter coefficients: the
+envelopes keep going, so turning the knob never snaps the gain reduction to zero
+(`testMbcLiveBallisticsChange`). **This is a completely different control from the AGC's
+"Slew Speed"** (§3.3, §4) — it only affects how quickly each band's compressor reacts, not how
+fast the overall gain rider moves.
+
+**Level detector — Peak <-> RMS (`mbc_detector`, 0..1, default 0 = Peak).** Each band's detector
+is a blend: `level = (1 − m)·peak + m·rms`, where `peak` is the stereo-linked `max(|L|,|R|)` and
+`rms` is `sqrt(2 · mean-square)` of the same linked signal, averaged over a one-pole 30 ms window.
+The attack/release ballistics are then applied to the blended level, as before. Two properties
+worth knowing:
+
+- **Sine-calibrated.** The `2·` makes a steady tone read the same amplitude in both modes, so
+  switching detector does not change how a steady bass note is treated; the two differ only on
+  how *peaky* the material is. On real music RMS reads well below peak, so **RMS mode compresses
+  noticeably less at the same threshold** (raise Compression, or lower Target LUFS which lowers
+  the threshold, to compensate). Measured on a high-crest-factor burst signal at 1 ms attack:
+  Low-Mid GR −11.3 dB (peak) / −9.5 dB (50%) / −7.6 dB (RMS).
+- **Ballistics already smooth the peak path.** With the 15 ms default attack a 1 ms burst barely
+  moves the peak envelope either, so Peak and RMS sound closest at slow attack settings and
+  furthest apart at fast ones.
+
+At 0 (Peak) the code path is bit-identical to before the detector existed
+(`testMbcRmsDetector`; and a bit-for-bit comparison of old vs new compressor output at default
+settings on a 6 s test signal was run when this was added — see §8). The RMS average is tracked
+even at 0, so moving the slider off Peak never starts from a stale value; only the `sqrt` is
+skipped. The limiter stays a pure peak detector — it must.
 
 **Phase-corrected recombination:** naively summing an LR4 low-pass and high-pass from the same
 crossover does *not* reconstruct flat — it sums to a 2nd-order allpass at the crossover
@@ -265,6 +264,40 @@ every preset that doesn't override Target LUFS.
 whatever gain reduction it applies; the Post Gain parameter (§3.6) is where that is made up by
 hand.
 
+### 3.5.2 BandEQ (`src/dsp/BandEQ.h`)
+
+Six gain controls on the MBC's six bands — `eq_sub`, `eq_bass`, `eq_lowmid`, `eq_highmid`,
+`eq_presence`, `eq_air`, each ±12 dB — and an `eq_position` switch (Before MBC / After MBC,
+default After) that puts the EQ either just ahead of the MBC or just behind it. Always after the
+AGC, always before Post Gain, the Low Cut and the limiter. In the UI each band's fader sits
+beside that band's gain-reduction meter in the Tone Shaper card, and the switch is in that
+card's header (where the Air Lift buttons were).
+
+**Filter shapes.** The four middle bands are RBJ peaking filters centred on the band's geometric
+centre (219 / 693 / 2049 / 5292 Hz) and as wide in octaves as the band itself. Sub is a low shelf
+cornered at 120 Hz and Air a high shelf cornered at 8 kHz, so they cover everything beyond their
+outer edge, as the compressor's outer bands do. The slider value is (nearly) the gain you get at
+the band centre: exact for the four bells, 92–97% for the two shelves' centres
+(`testBandEqFlatAndPerBand`). Neighbouring bands overlap smoothly — a +9 dB Bass boost leaks
++1.7 dB into Low-Mid's centre.
+
+*Why not the compressor's LR4 split with a gain per band?* Tried first. It is literally "the same
+bands", but a −9 dB cut only reached −5.6 dB at the Presence centre (neighbours' skirts leak
+back in), and an untouched EQ was a phase-rotating allpass chain rather than a passthrough. The
+bell/shelf version is accurate and, at 0 dB, an **exact passthrough** — every band is the
+identity filter, so the EQ is bit-transparent until moved (asserted sample-for-sample).
+
+**Smoothing.** Gains glide in dB with a ~15 ms time constant and the filters are retuned every
+16 samples, so moving a band never zippers (`testBandEqGainSmoothing`). A band returning to 0 dB
+snaps onto the exact passthrough once within 0.005 dB.
+
+**Before vs After.** After MBC is the default: the compressor never sees the EQ, so what you set
+is what you hear. Before MBC feeds the compressor the EQ'd signal — boosting Presence +9 dB makes
+that band's compressor work ~6 dB harder in the test (`testEqPositionRouting`) and nets less
+output level than the same boost after. Switching position live can click if the EQ is boosted
+hard (the filters keep their state, but the signal they see changes under them); at flat settings
+it is inaudible.
+
 ### 3.6 Post-MBC Gain
 
 A single manual trim (`postMbcGainDb`, ±12 dB), applied as a flat linear multiply, skipped
@@ -283,9 +316,57 @@ a bug.
 
 ### 3.8 SafetyLimiter (`src/dsp/SafetyLimiter.h`)
 
-1ms attack / 60ms release, 20:1 ratio soft limiter on the stereo-linked peak envelope, **plus**
-a hard per-sample clamp to `±ceilingLin` as an absolute last-resort safety net for anything the
-smoothed limiter doesn't fully catch (e.g. a single-sample transient inside the attack window).
+Two engines, picked by the **Limiter Lookahead** parameter (`limiter_lookahead`: Off / 1 ms /
+2 ms, default Off).
+
+**Off — the original limiter, zero latency, bit-identical to before** (checked sample for
+sample, audio and GR meter, on 8 s of hot noise with transients, odd block sizes and ceiling
+changes). 1ms attack / 60ms release, 20:1 ratio on the stereo-linked peak envelope, **plus** a
+hard per-sample clamp to `±ceilingLin`. Measured: a steady sine pushed only 3 dB over the
+ceiling comes out at ~2–3% THD and ~4.5–5.7% at +12 dB, at every frequency from 25 Hz to 5 kHz —
+the 1 ms attack lets the front of every peak through and the clamp squares it off. It also only
+sees sample peaks: an inter-sample-over test signal leaves it at **+2.7 dBFS true peak**.
+
+**1 ms / 2 ms — lookahead brickwall.** Latency is exactly the lookahead (48 / 96 samples at
+48 kHz, 44 / 88 at 44.1 kHz; `SafetyLimiter::lookaheadSamples`). Per sample:
+
+1. **Detector:** stereo-linked sample peak plus a 4× true-peak estimate (polyphase
+   Blackman-windowed sinc, 4 phases × 12 taps, each phase normalised to unity DC). It runs on
+   the detector path only — the audio is never resampled — and it is referenced to the sample
+   6 ago (the interpolator's own delay), estimating the peaks between that sample and the next.
+2. **Required gain** `ceiling / peak` (1 when under), then its **minimum over the smoothing
+   window plus a 20 ms hold** (monotonic queue, O(1)). The hold means successive half-cycles of
+   a bass note do not let the gain bounce between them — that bounce is what makes a plain fast
+   limiter distort bass. 20 ms covers 25 Hz; it was 10 ms first, which left 0.17% THD at 30 Hz
+   and 1.2% at 20 Hz (now 0.00% and 0.02%), at the cost of ~10 ms slower recovery after a burst.
+3. **Release:** instant down, 60 ms one-pole up.
+4. **Smoothing:** two cascaded moving averages whose combined span is the window
+   (`lookahead − 6 + 1` samples), so the gain glides down in an S-curve.
+5. **Apply** to the audio delayed by the lookahead.
+
+Because every term of the moving average is a minimum taken over a window that contains the
+delayed sample, the applied gain is never above what that sample needs: the ceiling is held by
+the gain alone. The hard clamp is kept as a last resort and counted
+(`SafetyLimiter::getClampCount()`); on the hot-noise-plus-transients test it is **0**. Measured:
+THD on sines pushed +3 / +12 dB is ~10⁻⁶ % from 25 Hz to 5 kHz in both modes; the inter-sample
+test comes out at −0.13 dBFS true peak against a −0.3 ceiling (the 12-tap estimator under-reads
+by ~0.17 dB at fs/4). 1 ms and 2 ms measure the same on these signals; 2 ms ramps the gain down
+over twice the time, which is gentler on dense real transients.
+
+**Switching live** fades out over 2 ms, swaps engines, and fades back in once audio emerges
+from the new delay line (≤ ~6 ms dip, no click — `testLimiterLookaheadSwitching`). Before the
+first block after `prepare()` a mode change applies at once (that is the host restoring the
+saved setting). `reset()` (the "Reset Set" button) clears only the Off engine's envelope and
+the meter, as before — emptying the lookahead delay line mid-song would drop audio.
+
+**Latency reporting / bypass.** `PluginProcessor` reports `latencySamples(mode)` in
+`prepareToPlay`, and re-reports it via `AsyncUpdater` (message thread) when the parameter
+changes. Both bypasses keep that latency: the plugin's own Bypass button (`EngineParameters::bypass`)
+and the host's bypass (`processBlockBypassed`) pass the audio through the lookahead delay
+untouched (`AutoLevelEngine::processBypassed`), so toggling bypass never shifts the audio in
+time. With Off, both are still exact no-ops. Hosts differ in whether they re-compensate a
+latency change during playback; changing the setting between sets is safest.
+
 The reported gain-reduction meter value has an "instant attack, ~16 dB/s release" smoothing
 applied purely for legible metering — it does not affect the audio path.
 
@@ -320,14 +401,18 @@ state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
 | `max_boost` | Max Boost | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` upward clamp |
 | `max_cut` | Max Cut | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` downward clamp |
 | `level_response` | Level Response | Float | 0 to 1 (0.01 step) | 0.85 | `LoudnessMeter` histogram decay half-life (§3.2) — **not** the leveler's slew rate |
-| `slew_speed` | Slew Speed | Choice | Slow / Normal / Fast | Normal | `Leveler` steady-state gain slew rate (§3.3) — **not** `mbc_speed` below, a different stage entirely. Added 2026-09-11 (§8) |
+| `slew_speed` | Slew Speed | Choice | Slow / Normal / Fast | Normal | `Leveler` steady-state gain slew rate (§3.3) — **not** `mbc_attack` / `mbc_release` below, a different stage entirely. Added 2026-09-11 (§8) |
 | `compression_amount` | Compression | Float | 0 to 1 (0.01 step) | 0.50 | `MultibandCompressor` ratio (1.0–4.0) and enable gate (`>= 0.02`) |
 | `tone_slope` | Tone Slope ("Tone Tilt") | Float | −3.0 to 0.0 dB/oct (0.1 step) | −1.5 dB/oct | `MultibandCompressor` threshold tilt |
 | `target_profile` | Target Profile | Choice | Pink Noise (Linear) / Modern Mix (Contoured) | Modern Mix | `MultibandCompressor` threshold contour. Note: `TargetProfile::CUSTOM` exists in the DSP enum but has no 3rd UI choice — unreachable from the plugin |
-| `mbc_speed` | MBC Speed | Choice | Slow / Normal / Fast | Normal | `MultibandCompressor` attack/release ballistics (§3.5) |
-| `air_exciter` | Air (Dynamic Air Lift) | Choice | Off / Low / Medium / High | Off | `DynamicAirLift` mode |
+| `mbc_attack` | MBC Attack | Float | 1 to 100 ms (log-skewed, 15 ms at centre of travel) | 15 ms | `MultibandCompressor` attack, bands 1–5 (Sub runs at 2×) — §3.5. Added 2026-10-08, replaces `mbc_speed` |
+| `mbc_release` | MBC Release | Float | 20 to 1000 ms (log-skewed, 200 ms at centre) | 200 ms | `MultibandCompressor` release, bands 1–5 (Sub runs at 2×). Added 2026-10-08 |
+| `mbc_detector` | Detector | Float | 0 (Peak) to 1 (RMS), 0.01 step | 0 = Peak | `MultibandCompressor` level-detector blend — §3.5. Added 2026-10-08 |
+| `eq_sub` … `eq_air` | EQ Sub / Bass / Low-Mid / High-Mid / Presence / Air | Float ×6 | −12 to +12 dB (0.1 step) | 0 dB | `BandEQ` band gains — §3.5.2. Added 2026-10-08 |
+| `eq_position` | EQ Position | Choice | Before MBC / After MBC | After MBC | Where `BandEQ` sits relative to the MBC. Added 2026-10-08 |
 | `post_mbc_gain` | Post Gain | Float | −12 to +12 dB (0.1 step) | 0 dB | Post-MBC manual trim |
 | `hpf_freq` | Low Cut | Float | 20 to 50 Hz (0.5 step) | 30 Hz | `HighPassFilter` cutoff (always enabled, see §3.7) |
+| `limiter_lookahead` | Lookahead (header) | Choice | Off / 1 ms / 2 ms | Off | `SafetyLimiter` engine and the plugin's latency (0 / 1 / 2 ms) — §3.8. Added 2026-10-08 |
 | `ceiling_db` | Limiter Ceiling ("Amp Ceiling") | Float | −3.0 to 0.0 dBFS (0.1 step) | −0.3 dBFS | `SafetyLimiter` ceiling |
 | `freeze_breakdowns` | Freeze Breakdowns | Bool | On/Off | On | `Leveler` breakdown-freeze enable (threshold itself is hardcoded at 7 LU, see §5) |
 | `bypass` | Bypass | Bool | On/Off | Off | Whole-engine bypass (`AutoLevelEngine::process` early-returns, leaving audio untouched) |
@@ -391,7 +476,7 @@ clang++ -std=c++20 -O0 -g -Isrc -UNDEBUG -o dsp_test tests/dsp_test.cpp
 # Full plugin build (fetches JUCE 8.0.6 via CMake FetchContent — first run is slow):
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
-./build/dsp_test                     # same 18 tests, built via CMake this time
+./build/dsp_test                     # same tests, built via CMake this time
 cmake --build build --target install_plugins   # installs VST3+AU to ~/Library/Audio/Plug-Ins
 ```
 
@@ -399,10 +484,12 @@ CI (`.github/workflows/build-and-release.yml`) builds macOS (Universal VST3/AU/S
 Windows x64/x86 (VST3/Standalone) on every version tag push or manual dispatch, runs `dsp_test`
 on each platform, and publishes a GitHub Release with zipped artifacts per platform.
 
-The test suite (`tests/dsp_test.cpp`, 18 tests) exercises `AutoLevelEngine` and every DSP
-submodule directly — K-weighting calibration, LR4 crossover flatness, EBU R128 loudness
-accuracy across levels, MBC speed ballistics (including a regression test that `prepare()`
-doesn't silently revert a selected Slow/Fast speed back to Normal), breakdown-freeze
+The test suite (`tests/dsp_test.cpp`, 28 tests) exercises `AutoLevelEngine` and every DSP
+submodule directly — K-weighting calibration, tone-profile thresholds, LR4 crossover flatness,
+EBU R128 loudness accuracy across levels, MBC attack/release (including a regression test that
+`prepare()` doesn't leave stale cached ballistics) and the Peak/RMS detector, the Band EQ
+(bit-exact flat, per-band accuracy, smoothing, pre/post routing), the lookahead limiter
+(exact latency, THD, ceiling, true peak, live switching, bypass latency), breakdown-freeze
 sensitivity, NaN/Inf sanitization, and the lock-free visual-state buffer. It does **not**
 exercise `PluginProcessor`/`PluginEditor` (those need a full JUCE build and a host/GUI
 environment) — as of 2026-09-11 a full CMake+JUCE build was verified to compile cleanly with
@@ -413,8 +500,6 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ## 7. Known unreachable/dead code (intentionally left in place)
 
 - `TargetProfile::CUSTOM` (§5) — UI can't select it.
-- `EngineParameters::airLift` field (§3.4) — `PluginProcessor.cpp` only ever sets the older
-  `airWeight` alias.
 - `LoudnessMeter::m_blockSamples`, `m_gatedMs` — computed/incremented, never read.
 - Several struct-level defaults that are always overwritten by a caller before use, kept only
   so directly-constructed instances (e.g. in tests) have a sane value:
@@ -427,6 +512,75 @@ zero warnings in project code, but no live-host or GUI interaction testing has b
 ---
 
 ## 8. Changelog
+
+### 2026-10-08 (later) — Lookahead limiter, selectable Off / 1 ms / 2 ms
+
+New `limiter_lookahead` parameter and header switch; full description in §3.8. **Default Off**,
+which is the old limiter bit for bit and zero latency, so existing sessions are unchanged until
+the setting is changed. Differences from the proposal in the previous entry, decided on
+measurements: the hold is **20 ms**, not ~10 (10 ms left 1.2% THD at 20 Hz); the release is a
+single 60 ms stage, not dual — with the hold in place steady tones measure ~10⁻⁶ % THD, so a
+second stage had nothing to fix; and the last resort stays the hard clamp rather than a
+soft-clip, because the gain alone already holds the ceiling (clamp hit count 0 on hot noise) and
+a soft-clip would add distortion to exactly the material the clamp would ever touch.
+
+Also: `AutoLevelEngine::processBypassed` / `latencySamples`, `PluginProcessor::processBlockBypassed`
+(JUCE asserts a plugin with latency overrides it) and latency reporting through `AsyncUpdater`.
+
+Tests: `testLimiterLookaheadLatency`, `testLimiterLookaheadNoDistortion`,
+`testLimiterLookaheadCeilingAndTruePeak`, `testLimiterLookaheadSwitching`, `testBypassKeepsLatency`
+— 28 pass. Sanitizer (ASan + UBSan) engine stress at 44.1 / 48 / 96 / 192 kHz with random
+settings, lookahead and bypass switched constantly, random block sizes: never over the ceiling,
+never non-finite. Full JUCE build clean, Standalone inspected. Not done: a live host run
+(including how a DAW reacts to the latency changing), `auval`.
+
+### 2026-10-08 — Air Lift removed; Peak/RMS detector; user attack/release; Band EQ
+
+Four changes requested by the owner.
+
+**1. Dynamic Air Lift removed** (the owner's "tone shaper": the stage that dynamically added air;
+its bass counterpart was already gone since 2026-09-11). Deleted `src/dsp/DynamicAirLift.h`, the
+`AirLiftMode`/`AirWeight` types, `EngineParameters::{airLift,airWeight}`, the four visual-state
+air fields, the `air_exciter` parameter, the "AIR:" buttons and LED meter in the Tone Shaper
+card header, the "AIR +" band label, and `testDynamicAirLift`. It defaulted to Off, so default
+sound is unchanged; sessions that had it on lose it (the stale value is ignored on load). The
+tonal target (Tone Slope, Pink Noise / Modern Mix, per-band thresholds, curve card) is **kept**.
+
+*(A first pass the same day misread the request and removed the tonal target instead; that was
+fully reverted before anything was committed. Bands.h, the threshold maths and the two
+tone-profile tests are back exactly as they were.)*
+
+**2. Peak <-> RMS detector** (`mbc_detector`) — §3.5.
+
+**3. MBC speed presets replaced by Attack / Release knobs** (`mbc_attack`, `mbc_release`) — §3.5.
+`MBCSpeed`, `MultibandCompressor::updateSpeed` and the `mbc_speed` parameter are gone. Defaults
+equal the old Normal preset. The old Slow/Fast presets were 2× / 0.5× Normal, i.e. attack 30/7.5
+ms and release 400/100 ms — all inside the new ranges.
+
+**4. Band EQ** (`eq_*`, `eq_position`) — §3.5.2. The compressor's crossover tree was extracted
+into `BandSplitter.h` for a first EQ attempt that reused it; that attempt was dropped (see
+§3.5.2), so the extraction now has a single user. It is behaviour-neutral (see Verification) and
+left in place; folding it back into `MultibandCompressor.h` would also be fine.
+
+**UI.** The editor grew from 840×660 to 840×700 (still aspect-locked and scalable). The Tone
+Shaper card is 40 px taller and each band column now holds the GR meter and, beside it, the
+band's EQ fader; the EQ Before/After switch replaced the MBC Speed buttons in its header. The
+controls card is a 6×2 grid: row 1 Target LUFS, Max Boost, Max Cut, Level Response, Post Gain,
+Low Cut; row 2 Compression, Tone Slope, Detector, MBC Attack, MBC Release, Limiter Ceiling. The
+decorative "Safety Limiter / 24 dB/oct Sub Cut / Clip-Free Output" badge was dropped to make room.
+
+**Verification.** `dsp_test`: 23 tests pass (`testMbcSpeedBallistics` → `testMbcAttackRelease`;
+added `testMbcLiveBallisticsChange`, `testMbcRmsDetector`, `testBandEqFlatAndPerBand`,
+`testBandEqGainSmoothing`, `testEqPositionRouting`; removed `testDynamicAirLift`). The
+compressor was compared against the committed (pre-change) code on a 6 s tonal-plus-noise
+stereo signal at default settings: **bit-identical output**; the untouched
+`testMbcHasNoMakeupGain` and `testMaxCompressionRatio` reproduce their committed numbers exactly
+(−8.64 / −9.81 dB; −6.97 / −7.75 dB). Engine stress run (random extreme settings, random block
+sizes, ASan + UBSan): output always finite and ≤ the ceiling. Full JUCE build
+(VST3/AU/Standalone) clean with no project warnings; the Standalone was launched and inspected
+visually. Not done: a live-host run, and `auval`.
+
+**Limiter:** measured here, then implemented the same day — see the next entry.
 
 ### 2026-09-29 — Removed MBC auto-makeup (ported from autolevel-box)
 

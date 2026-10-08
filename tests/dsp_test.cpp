@@ -188,73 +188,212 @@ void testEbuR128DynamicLoudness() {
     std::cout << "  -> PASS: EBU R128 measures varying loudness accurately across all levels." << std::endl;
 }
 
-void testMbcSpeedBallistics() {
-    std::cout << "[TEST] Multiband Compressor speed ballistics (Slow, Normal, Fast)..." << std::endl;
+namespace {
+
+// 60 Hz sine at 0.5 FS for `seconds`, in one block - lands in the Sub band.
+std::vector<float> subSine(double sampleRate, double seconds) {
+    size_t n = static_cast<size_t>(sampleRate * seconds);
+    std::vector<float> v(n);
+    for (size_t i = 0; i < n; ++i) {
+        v[i] = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
+    }
+    return v;
+}
+
+} // namespace
+
+void testMbcAttackRelease() {
+    std::cout << "[TEST] Multiband Compressor user-set attack / release..." << std::endl;
+    // MBC tests below use a -30 dBFS base threshold: with the default tone tilt and Modern Mix
+    // contour the Sub band's own threshold sits several dB above the base, and these tests need
+    // it compressing hard.
     double sampleRate = 48000.0;
 
-    auto measureCompression = [&](MBCSpeed speed) {
+    // Gain reduction the Sub band has reached 100 ms after a 60 Hz burst starts.
+    auto measureCompression = [&](float attackMs, float releaseMs) {
         MultibandCompressor mbc;
         mbc.prepare(sampleRate);
 
         MBCParams params;
         params.enabled = true;
-        params.speed = speed;
+        params.attackMs = attackMs;
+        params.releaseMs = releaseMs;
         params.compressionAmount = 0.8f;
-        params.baseThresholdDb = -24.0f;
-    
-        size_t n = static_cast<size_t>(sampleRate * 0.1);
-        std::vector<float> l(n), r(n);
-        for (size_t i = 0; i < n; ++i) {
-            float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
-            l[i] = s;
-            r[i] = s;
-        }
+        params.baseThresholdDb = -30.0f;
 
-        mbc.process(l.data(), r.data(), n, params);
+        auto l = subSine(sampleRate, 0.1);
+        auto r = l;
+        mbc.process(l.data(), r.data(), l.size(), params);
         return mbc.getGainReductionsDb()[0];
     };
 
-    float fastGr = measureCompression(MBCSpeed::FAST);
-    float normalGr = measureCompression(MBCSpeed::NORMAL);
-    float slowGr = measureCompression(MBCSpeed::SLOW);
+    float fastGr = measureCompression(3.0f, 200.0f);
+    float defaultGr = measureCompression(15.0f, 200.0f);
+    float slowGr = measureCompression(60.0f, 200.0f);
 
-    std::cout << "  Fast 100ms Bass GR: " << fastGr << " dB" << std::endl;
-    std::cout << "  Slow 100ms Bass GR: " << slowGr << " dB" << std::endl;
+    std::cout << "  Attack  3 ms, 100ms Sub GR: " << fastGr << " dB" << std::endl;
+    std::cout << "  Attack 15 ms, 100ms Sub GR: " << defaultGr << " dB" << std::endl;
+    std::cout << "  Attack 60 ms, 100ms Sub GR: " << slowGr << " dB" << std::endl;
 
-    assert(fastGr < normalGr);
-    assert(normalGr < slowGr);
+    // A shorter attack gets further down in the same time (more negative GR).
+    assert(fastGr < defaultGr);
+    assert(defaultGr < slowGr);
 
-    // Verify prepare() does not silently revert speed caching (finding 9)
-    MultibandCompressor mbcCached;
-    mbcCached.prepare(sampleRate);
-    MBCParams pFast;
-    pFast.enabled = true;
-    pFast.speed = MBCSpeed::FAST;
-    pFast.compressionAmount = 0.8f;
-    pFast.baseThresholdDb = -24.0f;
+    // Release: after the burst ends, a long release holds the reduction longer.
+    auto grAfterRelease = [&](float releaseMs) {
+        MultibandCompressor mbc;
+        mbc.prepare(sampleRate);
+        MBCParams params;
+        params.enabled = true;
+        params.attackMs = 5.0f;
+        params.releaseMs = releaseMs;
+        params.compressionAmount = 0.8f;
+        params.baseThresholdDb = -30.0f;
 
-    size_t n = static_cast<size_t>(sampleRate * 0.1);
-    std::vector<float> l(n), r(n);
-    for (size_t i = 0; i < n; ++i) {
-        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
-        l[i] = s;
-        r[i] = s;
+        auto burst = subSine(sampleRate, 0.4);
+        auto burstR = burst;
+        mbc.process(burst.data(), burstR.data(), burst.size(), params);
+        std::vector<float> silence(static_cast<size_t>(sampleRate * 0.15), 0.0f), silenceR = silence;
+        mbc.process(silence.data(), silenceR.data(), silence.size(), params);
+        return mbc.getGainReductionsDb()[0];
+    };
+    float quickRel = grAfterRelease(40.0f);
+    float longRel = grAfterRelease(800.0f);
+    std::cout << "  GR 150 ms after burst: release 40 ms -> " << quickRel << " dB, 800 ms -> " << longRel << " dB" << std::endl;
+    assert(quickRel > longRel);   // quick release has recovered more (closer to 0)
+
+    // The pre-change defaults must be intact: 15 / 200 ms, Sub at twice that. A 1 ms-off value
+    // would show up here; compare against explicitly set values rather than the struct defaults.
+    MBCParams defaults;
+    assert(defaults.attackMs == 15.0f && defaults.releaseMs == 200.0f && defaults.detectorRmsMix == 0.0f);
+
+    // Out-of-range values are clamped, not trusted.
+    float tooFast = measureCompression(0.0f, 200.0f);
+    float minAttack = measureCompression(MultibandCompressor::MIN_ATTACK_MS, 200.0f);
+    assert(tooFast == minAttack);
+
+    // prepare() must reinstall the ballistics the cache believes are in force: apply a non-default
+    // setting, re-prepare (e.g. a sample-rate change), process with the same setting, and expect
+    // the same result as a fresh instance.
+    MultibandCompressor reprepared;
+    reprepared.prepare(sampleRate);
+    MBCParams p;
+    p.enabled = true; p.attackMs = 3.0f; p.releaseMs = 200.0f; p.compressionAmount = 0.8f; p.baseThresholdDb = -30.0f;
+    auto l = subSine(sampleRate, 0.1); auto r = l;
+    reprepared.process(l.data(), r.data(), l.size(), p);
+    reprepared.prepare(sampleRate);
+    l = subSine(sampleRate, 0.1); r = l;
+    reprepared.process(l.data(), r.data(), l.size(), p);
+    assert(std::abs(reprepared.getGainReductionsDb()[0] - fastGr) < 0.001f);
+
+    std::cout << "  -> PASS: attack and release shape the compressor, are clamped, and survive prepare()." << std::endl;
+}
+
+void testMbcLiveBallisticsChange() {
+    std::cout << "[TEST] Changing attack/release mid-playback does not reset the compressor..." << std::endl;
+    double sampleRate = 48000.0;
+    MultibandCompressor mbc;
+    mbc.prepare(sampleRate);
+
+    MBCParams params;
+    params.enabled = true;
+    params.compressionAmount = 0.8f;
+    params.baseThresholdDb = -30.0f;
+
+    auto l = subSine(sampleRate, 0.5);
+    auto r = l;
+    mbc.process(l.data(), r.data(), l.size(), params);
+    float before = mbc.getGainReductionsDb()[0];
+    assert(before < -3.0f);
+
+    // One short block with new times: the envelope must carry on from where it was.
+    params.attackMs = 40.0f;
+    params.releaseMs = 300.0f;
+    auto l2 = subSine(sampleRate, 0.005);
+    auto r2 = l2;
+    mbc.process(l2.data(), r2.data(), l2.size(), params);
+    float after = mbc.getGainReductionsDb()[0];
+    std::cout << "  Sub GR before " << before << " dB, 5 ms after the change " << after << " dB" << std::endl;
+    assert(std::abs(after - before) < 1.5f);
+    std::cout << "  -> PASS: envelope state survives a live ballistics change." << std::endl;
+}
+
+void testMbcRmsDetector() {
+    std::cout << "[TEST] Multiband Compressor peak <-> RMS detector..." << std::endl;
+    double sampleRate = 48000.0;
+
+    // High crest factor: a 1 kHz sine gated on for 1 ms of every 25 ms. Peak detection sees the
+    // full-height bursts; RMS sees them diluted by the gaps. (Run with a 1 ms attack: at the
+    // default 15 ms the ballistics alone smooth a 1 ms burst, whatever the detector.)
+    auto sparseBurst = [&](size_t n) {
+        std::vector<float> v(n);
+        for (size_t i = 0; i < n; ++i) {
+            size_t phase = i % static_cast<size_t>(sampleRate * 0.025);
+            bool on = phase < static_cast<size_t>(sampleRate * 0.001);
+            v[i] = on ? 0.9f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate)) : 0.0f;
+        }
+        return v;
+    };
+
+    auto meanGr = [&](float rmsMix, bool useBursts) {
+        MultibandCompressor mbc;
+        mbc.prepare(sampleRate);
+        MBCParams params;
+        params.enabled = true;
+        if (useBursts) { params.attackMs = 1.0f; params.releaseMs = 50.0f; }
+        params.compressionAmount = 0.8f;
+        params.baseThresholdDb = -30.0f;
+        params.detectorRmsMix = rmsMix;
+
+        size_t n = static_cast<size_t>(sampleRate * 2.0);
+        std::vector<float> l = useBursts ? sparseBurst(n) : subSine(sampleRate, 2.0);
+        auto r = l;
+        // Block-wise, accumulating the Low-Mid band's (1 kHz) reduction over the settled second.
+        double sum = 0.0; size_t count = 0;
+        const size_t block = 256;
+        for (size_t off = 0; off < n; off += block) {
+            size_t m = std::min(block, n - off);
+            mbc.process(l.data() + off, r.data() + off, m, params);
+            if (off >= n / 2) {
+                sum += mbc.getGainReductionsDb()[useBursts ? 2 : 0];
+                ++count;
+            }
+        }
+        return static_cast<float>(sum / static_cast<double>(count));
+    };
+
+    // 1. A steady sine reads the same in both modes (the RMS detector is sine-calibrated), so
+    //    switching detector does not change how a steady bass note is treated.
+    float sinePeak = meanGr(0.0f, false);
+    float sineRms = meanGr(1.0f, false);
+    std::cout << "  Steady 60 Hz sine, Sub GR: peak " << sinePeak << " dB, RMS " << sineRms << " dB" << std::endl;
+    assert(sinePeak < -3.0f);
+    assert(std::abs(sinePeak - sineRms) < 1.0f);
+
+    // 2. Peaky material is compressed less by RMS than by peak, and the slider is monotonic.
+    float burstPeak = meanGr(0.0f, true);
+    float burstHalf = meanGr(0.5f, true);
+    float burstRms = meanGr(1.0f, true);
+    std::cout << "  Sparse 1 kHz bursts, Low-Mid GR: peak " << burstPeak << " dB, 50% " << burstHalf
+              << " dB, RMS " << burstRms << " dB" << std::endl;
+    assert(burstPeak < burstRms - 1.0f);      // RMS clearly gentler on peaky material
+    assert(burstPeak <= burstHalf + 0.01f);
+    assert(burstHalf <= burstRms + 0.01f);
+
+    // 3. Peak mode is untouched by the new detector: mix 0 must equal an instance that never
+    //    saw a mix value at all (the struct default).
+    {
+        MultibandCompressor a, b;
+        a.prepare(sampleRate); b.prepare(sampleRate);
+        MBCParams pa; pa.compressionAmount = 0.8f; pa.baseThresholdDb = -30.0f;
+        MBCParams pb = pa; pb.detectorRmsMix = 0.0f;
+        auto la = subSine(sampleRate, 0.3), lb = la, ra = la, rb = la;
+        a.process(la.data(), ra.data(), la.size(), pa);
+        b.process(lb.data(), rb.data(), lb.size(), pb);
+        for (size_t i = 0; i < la.size(); ++i) assert(la[i] == lb[i]);
     }
-    mbcCached.process(l.data(), r.data(), n, pFast);
-    float fastBefore = mbcCached.getGainReductionsDb()[0];
 
-    mbcCached.prepare(sampleRate);
-    for (size_t i = 0; i < n; ++i) {
-        float s = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 60.0 * (static_cast<double>(i) / sampleRate)));
-        l[i] = s;
-        r[i] = s;
-    }
-    mbcCached.process(l.data(), r.data(), n, pFast);
-    float fastAfter = mbcCached.getGainReductionsDb()[0];
-
-    assert(std::abs(fastBefore - fastAfter) < 0.001f);
-
-    std::cout << "  -> PASS: MBC speed mode correctly alters compression ballistics." << std::endl;
+    std::cout << "  -> PASS: RMS detector is sine-calibrated, gentler on peaks, and blends monotonically." << std::endl;
 }
 
 void testPostMbcGain() {
@@ -292,83 +431,6 @@ void testPostMbcGain() {
     assert(std::abs((peakPlus6 / peak0) - 1.99526) < 0.01);
     assert(std::abs((peakMinus6 / peak0) - 0.501187) < 0.01);
         std::cout << "  -> PASS: Post-MBC Gain accurately boosts and attenuates signal." << std::endl;
-}
-
-void testDynamicAirLift() {
-    std::cout << "[TEST] DynamicAirLift (Dolby Duo high-end upward expansion & sibilance ducking)..." << std::endl;
-    DynamicAirLift airLift;
-    double sampleRate = 48000.0;
-    airLift.prepare(sampleRate);
-
-    // 1. Test AirLiftMode::OFF is 100% bit-identical bypass
-    size_t n = 4800;
-    std::vector<float> origL(n), origR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float s = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 1000.0 * i / sampleRate));
-        origL[i] = s;
-        origR[i] = s;
-    }
-    std::vector<float> passL = origL;
-    std::vector<float> passR = origR;
-    airLift.process(passL.data(), passR.data(), n, AirLiftMode::OFF);
-    for (size_t i = 0; i < n; ++i) {
-        assert(passL[i] == origL[i]);
-        assert(passR[i] == origR[i]);
-    }
-    std::cout << "  -> PASS: AirLiftMode::OFF is 100% bit-identical bypass." << std::endl;
-
-    // 2. Test air lift on dark vintage material (strong 2 kHz mid, weak 12 kHz air)
-    airLift.reset();
-    std::vector<float> darkL(n), darkR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
-        float weakAir = 0.02f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
-        darkL[i] = mid + weakAir;
-        darkR[i] = mid + weakAir;
-    }
-    airLift.process(darkL.data(), darkR.data(), n, AirLiftMode::MED);
-    float airLiftDb = airLift.getLiftDb();
-    std::cout << "  Dynamic Air Lift applied on dark track: +" << airLiftDb << " dB" << std::endl;
-    assert(airLiftDb > 2.0f && airLiftDb <= 4.5f);
-    std::cout << "  -> PASS: Dynamic Air Lift smoothly pulls up natural top-end air with zero distortion." << std::endl;
-
-    // 3. Test adaptive suppression: on already-bright track, lift must drop to near 0 dB
-    airLift.reset();
-    std::vector<float> brightL(n), brightR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float mid = 0.3f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
-        float brightAir = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
-        brightL[i] = mid + brightAir;
-        brightR[i] = mid + brightAir;
-    }
-    airLift.process(brightL.data(), brightR.data(), n, AirLiftMode::MED);
-    float brightLiftDb = airLift.getLiftDb();
-    std::cout << "  Dynamic Air Lift on bright track: +" << brightLiftDb << " dB" << std::endl;
-    assert(brightLiftDb < 1.0f);
-    std::cout << "  -> PASS: Adaptive sensor protects bright tracks from harshness." << std::endl;
-
-    // 4. Regression test for a real bug (2026-09-11): the mid anchor used to be a
-    // plain low-pass ("everything below 2kHz") instead of a 1-3kHz bandpass, so the
-    // denominator was always huge relative to any real track's air content and the
-    // lift barely varied with actual brightness. Case 3 above didn't catch it because
-    // its "bright" signal has MORE amplitude at 12kHz than at 2kHz - a ratio no real
-    // track has. This uses a realistic ratio instead (air always quieter than mid,
-    // like real cymbals/hats vs. a vocal or instrument fundamental) and asserts the
-    // lift actually tracks brightness rather than staying flat.
-    airLift.reset();
-    std::vector<float> moderateBrightL(n), moderateBrightR(n);
-    for (size_t i = 0; i < n; ++i) {
-        float mid = 0.5f * static_cast<float>(std::sin(2.0 * TEST_PI * 2000.0 * i / sampleRate));
-        float moderateAir = 0.08f * static_cast<float>(std::sin(2.0 * TEST_PI * 12000.0 * i / sampleRate));
-        moderateBrightL[i] = mid + moderateAir;
-        moderateBrightR[i] = mid + moderateAir;
-    }
-    airLift.process(moderateBrightL.data(), moderateBrightR.data(), n, AirLiftMode::MED);
-    float moderateBrightLiftDb = airLift.getLiftDb();
-    std::cout << "  Dynamic Air Lift on realistic moderately-bright track: +" << moderateBrightLiftDb
-              << " dB (dark track was +" << airLiftDb << " dB)" << std::endl;
-    assert(airLiftDb - moderateBrightLiftDb > 0.3f);
-    std::cout << "  -> PASS: Lift actually discriminates brightness at realistic (non-extreme) ratios." << std::endl;
 }
 
 void testHighPassFilter() {
@@ -615,6 +677,171 @@ void testMbcHasNoMakeupGain() {
     std::cout << "  -> PASS: MBC output drops by its gain reduction, no makeup applied." << std::endl;
 }
 
+void testBandEqFlatAndPerBand() {
+    std::cout << "[TEST] Band EQ: bit-transparent when flat, accurate and band-local when moved..." << std::endl;
+    double sampleRate = 48000.0;
+
+    // Steady-state level change, in dB, of a sine at `freq` through the EQ with the given gains.
+    auto gainAt = [&](double freq, const std::array<float, Bands::COUNT>& gains) {
+        BandEQ eq;
+        eq.prepare(sampleRate);
+        size_t n = 48000;
+        std::vector<float> l(n), r(n);
+        for (size_t i = 0; i < n; ++i) {
+            l[i] = r[i] = 0.3f * static_cast<float>(std::sin(2.0 * TEST_PI * freq * (static_cast<double>(i) / sampleRate)));
+        }
+        eq.process(l.data(), r.data(), n, gains);
+        double sumIn = 0.0, sumOut = 0.0;
+        for (size_t i = 24000; i < n; ++i) {
+            double in = 0.3 * std::sin(2.0 * TEST_PI * freq * (static_cast<double>(i) / sampleRate));
+            sumIn += in * in;
+            sumOut += static_cast<double>(l[i]) * l[i];
+        }
+        return 10.0 * std::log10(sumOut / sumIn);
+    };
+
+    // Flat: not just "close" - the output is the input, sample for sample.
+    {
+        BandEQ eq;
+        eq.prepare(sampleRate);
+        size_t n = 4800;
+        std::vector<float> l(n), r(n);
+        for (size_t i = 0; i < n; ++i) {
+            l[i] = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 440.0 * i / sampleRate));
+            r[i] = 0.4f * static_cast<float>(std::sin(2.0 * TEST_PI * 3100.0 * i / sampleRate));
+        }
+        auto l0 = l, r0 = r;
+        std::array<float, Bands::COUNT> flat{};
+        eq.process(l.data(), r.data(), n, flat);
+        for (size_t i = 0; i < n; ++i) { assert(l[i] == l0[i]); assert(r[i] == r0[i]); }
+    }
+
+    // +6 dB on Presence (3.5-8 kHz): lands at the band's centre, leaves the rest alone.
+    std::array<float, Bands::COUNT> presence{};
+    presence[4] = 6.0f;
+    double atCentre = gainAt(5292.0, presence);
+    double atBass = gainAt(100.0, presence);
+    double atVoice = gainAt(600.0, presence);
+    std::cout << "  Presence +6 dB -> 5.3 kHz: " << atCentre << " dB, 100 Hz: " << atBass
+              << " dB, 600 Hz: " << atVoice << " dB" << std::endl;
+    assert(std::abs(atCentre - 6.0) < 0.3);
+    assert(std::abs(atBass) < 0.1);
+    assert(std::abs(atVoice) < 0.2);
+
+    // Each of the six bands reaches (nearly) its own gain at its centre frequency; the outer two
+    // are shelves, so they approach their gain from the inside of the band.
+    const double centres[Bands::COUNT] = { 49.0, 219.0, 693.0, 2049.0, 5292.0, 12649.0 };
+    for (size_t b = 0; b < Bands::COUNT; ++b) {
+        for (float setDb : { -9.0f, 9.0f }) {
+            std::array<float, Bands::COUNT> g{};
+            g[b] = setDb;
+            double got = gainAt(centres[b], g);
+            std::cout << "  " << Bands::NAMES[b] << " " << setDb << " dB -> " << got << " dB at " << centres[b] << " Hz" << std::endl;
+            double tol = (b == 0 || b == Bands::COUNT - 1) ? 1.3 : 0.3;
+            assert(std::abs(got - setDb) < tol);
+        }
+    }
+
+    // A boost in one band moves its neighbour's centre only a little.
+    std::array<float, Bands::COUNT> bassOnly{};
+    bassOnly[1] = 9.0f;
+    double lowMidLeak = gainAt(693.0, bassOnly);
+    std::cout << "  Bass +9 dB leaks " << lowMidLeak << " dB into Low-Mid's centre" << std::endl;
+    assert(lowMidLeak < 3.0);
+
+    // Out-of-range gains are clamped to +/-12 dB.
+    std::array<float, Bands::COUNT> huge{};
+    huge[4] = 40.0f;
+    assert(gainAt(5292.0, huge) < 12.1);
+
+    std::cout << "  -> PASS: EQ is transparent at 0 dB, accurate at each band centre, and clamped." << std::endl;
+}
+
+void testBandEqGainSmoothing() {
+    std::cout << "[TEST] Band EQ: gain changes are smoothed, not stepped..." << std::endl;
+    double sampleRate = 48000.0;
+    BandEQ eq;
+    eq.prepare(sampleRate);
+
+    // DC-ish steady 200 Hz tone; settle flat, then slam Bass to +12 dB in one block and look
+    // at the largest sample-to-sample jump in the output compared with the unprocessed tone's.
+    const size_t n = 4800;
+    auto tone = [&](size_t offset) {
+        std::vector<float> v(n);
+        for (size_t i = 0; i < n; ++i) {
+            v[i] = 0.2f * static_cast<float>(std::sin(2.0 * TEST_PI * 200.0 * (static_cast<double>(offset + i) / sampleRate)));
+        }
+        return v;
+    };
+    std::array<float, Bands::COUNT> flat{}, boosted{};
+    boosted[1] = 12.0f;
+
+    for (size_t blk = 0; blk < 4; ++blk) {
+        auto l = tone(blk * n), r = l;
+        eq.process(l.data(), r.data(), n, flat);
+    }
+    auto l = tone(4 * n), r = l;
+    eq.process(l.data(), r.data(), n, boosted);
+
+    double maxStep = 0.0;
+    for (size_t i = 1; i < n; ++i) maxStep = std::max(maxStep, static_cast<double>(std::abs(l[i] - l[i - 1])));
+    // Fully boosted 200 Hz at +12 dB (x4) has a natural max step of ~0.2*4*2*pi*200/48000 = 0.021.
+    std::cout << "  Largest sample step through the change: " << maxStep << std::endl;
+    assert(maxStep < 0.05);
+    std::cout << "  -> PASS: no zipper step when a band is moved." << std::endl;
+}
+
+void testEqPositionRouting() {
+    std::cout << "[TEST] Band EQ sits before or after the MBC, as chosen..." << std::endl;
+    double sampleRate = 48000.0;
+
+    // A tone in the Presence band, level chosen so the compressor is working. Boosting
+    // Presence +9 dB before the MBC feeds it a hotter signal, so it compresses that band
+    // harder; after the MBC the boost is not seen by the detector.
+    auto run = [&](EqPosition pos, float presenceDb, float& presenceGr) {
+        AutoLevelEngine engine;
+        engine.prepare(sampleRate);
+        EngineParameters p;
+        p.compressionAmount = 0.8f;
+        p.levelResponse = 0.0f;
+        p.maxBoostDb = 0.0f;
+        p.maxCutDb = 0.0f;       // AGC out of the picture
+        p.targetLUFS = -9.0f;    // base MBC threshold -24 dBFS
+        p.ceilingDb = 0.0f;
+        p.hpfEnabled = false;
+        p.eqPosition = pos;
+        p.eqGainsDb[4] = presenceDb;
+
+        const size_t block = 480;
+        std::vector<float> l(block), r(block);
+        double phase = 0.0;
+        const double inc = 2.0 * TEST_PI * 5000.0 / sampleRate;
+        double sumSq = 0.0; size_t count = 0;
+        for (size_t b = 0; b < 400; ++b) {
+            for (size_t i = 0; i < block; ++i) {
+                l[i] = r[i] = 0.1f * static_cast<float>(std::sin(phase));
+                phase += inc;
+            }
+            engine.process(l.data(), r.data(), block, p);
+            if (b >= 300) { for (size_t i = 0; i < block; ++i) { sumSq += static_cast<double>(l[i]) * l[i]; ++count; } }
+        }
+        presenceGr = engine.getVisualState().mbcGainReductionsDb[4];
+        return 10.0 * std::log10(sumSq / static_cast<double>(count) / (0.1 * 0.1 / 2.0));
+    };
+
+    float grPlain = 0, grPre = 0, grPost = 0;
+    double outPlain = run(EqPosition::POST_MBC, 0.0f, grPlain);
+    double outPre = run(EqPosition::PRE_MBC, 9.0f, grPre);
+    double outPost = run(EqPosition::POST_MBC, 9.0f, grPost);
+    std::cout << "  Presence GR: flat " << grPlain << " dB, EQ pre " << grPre << " dB, EQ post " << grPost << " dB" << std::endl;
+    std::cout << "  Output level: flat " << outPlain << " dB, EQ pre " << outPre << " dB, EQ post " << outPost << " dB" << std::endl;
+
+    assert(std::abs(grPost - grPlain) < 0.05f);   // post-MBC EQ is invisible to the detector
+    assert(grPre < grPost - 2.0f);                // pre-MBC EQ makes the band work harder
+    assert(outPost > outPre);                     // and so the same boost nets less level when pre
+    std::cout << "  -> PASS: EQ position changes what the compressor sees." << std::endl;
+}
+
 void testFullChain() {
     std::cout << "[TEST] AutoLevelEngine full chain: AGC -> MBC -> Limiter..." << std::endl;
     AutoLevelEngine engine;
@@ -765,7 +992,7 @@ void testSeedGain() {
 
         std::vector<float> l(N), r(N);
         double phase = 0.0;
-        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const double inc = 2.0 * TEST_PI * 1000.0 / 48000.0;
         const float amp = std::pow(10.0f, -21.0f / 20.0f);
 
         // One second only: far short of what convergence from zero would need.
@@ -794,7 +1021,7 @@ void testSeedGain() {
 
         std::vector<float> l(N), r(N);
         double phase = 0.0;
-        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const double inc = 2.0 * TEST_PI * 1000.0 / 48000.0;
         const float amp = std::pow(10.0f, -6.0f / 20.0f);   // actually loud
 
         for (int block = 0; block < static_cast<int>(48000 * 20 / N); ++block) {
@@ -856,7 +1083,7 @@ void testMaxCompressionRatio() {
 
         std::vector<float> l(N), r(N);
         double phase = 0.0;
-        const double inc = 2.0 * M_PI * 1000.0 / 48000.0;
+        const double inc = 2.0 * TEST_PI * 1000.0 / 48000.0;
         const float amp = std::pow(10.0f, -6.0f / 20.0f);
         for (int block = 0; block < static_cast<int>(48000 * 4 / N); ++block) {
             for (size_t i = 0; i < N; ++i) {
@@ -880,6 +1107,215 @@ void testMaxCompressionRatio() {
     std::cout << "  -> PASS: default unchanged, higher ratio compresses harder!" << std::endl;
 }
 
+namespace {
+
+// Reference true peak: 16x reconstruction with a long Hann-windowed sinc (far finer than the
+// limiter's own 12-tap-per-phase estimator, so it can judge it).
+double referenceTruePeak(const std::vector<float>& x, size_t start, size_t end) {
+    const int U = 16, K = 64;
+    double tp = 0.0;
+    for (size_t n = start + K; n + K < end; ++n) {
+        for (int u = 0; u < U; ++u) {
+            double t = static_cast<double>(n) + static_cast<double>(u) / U, acc = 0.0;
+            for (int k = -K; k <= K; ++k) {
+                double d = t - static_cast<double>(static_cast<long>(n) + k);
+                double sn = std::abs(d) < 1e-12 ? 1.0 : std::sin(TEST_PI * d) / (TEST_PI * d);
+                acc += x[static_cast<size_t>(static_cast<long>(n) + k)] * sn * (0.5 + 0.5 * std::cos(TEST_PI * d / (K + 1)));
+            }
+            tp = std::max(tp, std::abs(acc));
+        }
+    }
+    return tp;
+}
+
+// THD (fraction) of a limited sine, harmonics 2-10, over whole cycles at the end of the buffer.
+double sineThd(const std::vector<float>& y, double f, double sampleRate) {
+    size_t cycles = static_cast<size_t>(std::max(1.0, f * 0.5));
+    size_t len = static_cast<size_t>(std::round(static_cast<double>(cycles) * sampleRate / f));
+    size_t st = y.size() - len;
+    auto proj = [&](int h) {
+        double re = 0.0, im = 0.0;
+        for (size_t i = 0; i < len; ++i) {
+            double ph = 2.0 * TEST_PI * h * f * static_cast<double>(st + i) / sampleRate;
+            re += y[st + i] * std::cos(ph);
+            im -= y[st + i] * std::sin(ph);
+        }
+        return std::sqrt(re * re + im * im) * 2.0 / static_cast<double>(len);
+    };
+    double fund = proj(1), hs = 0.0;
+    for (int h = 2; h <= 10; ++h) { double v = proj(h); hs += v * v; }
+    return std::sqrt(hs) / fund;
+}
+
+} // namespace
+
+void testLimiterLookaheadLatency() {
+    std::cout << "[TEST] Limiter lookahead: exact latency, transparent below the ceiling..." << std::endl;
+    for (double sr : { 44100.0, 48000.0 }) {
+        for (auto mode : { LimiterLookahead::OFF, LimiterLookahead::MS_1, LimiterLookahead::MS_2 }) {
+            SafetyLimiter lim;
+            lim.setLookahead(mode);
+            lim.prepare(sr);
+            lim.setCeilingDb(-0.3f);
+            std::vector<float> l(512, 0.0f), r(512, 0.0f);
+            l[10] = 0.5f; r[10] = -0.25f;
+            lim.process(l.data(), r.data(), l.size());
+            const int expected = SafetyLimiter::lookaheadSamples(mode, sr);
+            for (size_t i = 0; i < l.size(); ++i) {
+                float wantL = (static_cast<int>(i) == 10 + expected) ? 0.5f : 0.0f;
+                float wantR = (static_cast<int>(i) == 10 + expected) ? -0.25f : 0.0f;
+                assert(l[i] == wantL && r[i] == wantR);   // delayed, not altered, not faded in
+            }
+            std::cout << "  " << sr << " Hz, mode " << static_cast<int>(mode) << ": " << expected
+                      << " samples (" << 1000.0 * expected / sr << " ms)" << std::endl;
+        }
+    }
+    assert(SafetyLimiter::lookaheadSamples(LimiterLookahead::MS_1, 48000.0) == 48);
+    assert(SafetyLimiter::lookaheadSamples(LimiterLookahead::MS_2, 48000.0) == 96);
+    std::cout << "  -> PASS: latency is exactly the selected lookahead, and 0 for Off." << std::endl;
+}
+
+void testLimiterLookaheadNoDistortion() {
+    std::cout << "[TEST] Limiter lookahead: pushed sines stay clean (Off for comparison)..." << std::endl;
+    const double sr = 48000.0;
+    const double ceilLin = std::pow(10.0, -0.3 / 20.0);
+    auto run = [&](LimiterLookahead mode, double f, double pushDb, float& peakOut) {
+        SafetyLimiter lim;
+        lim.setLookahead(mode);
+        lim.prepare(sr);
+        lim.setCeilingDb(-0.3f);
+        size_t n = static_cast<size_t>(sr * 2.0);
+        std::vector<float> l(n), r;
+        double amp = ceilLin * std::pow(10.0, pushDb / 20.0);
+        for (size_t i = 0; i < n; ++i) l[i] = static_cast<float>(amp * std::sin(2.0 * TEST_PI * f * i / sr));
+        r = l;
+        for (size_t o = 0; o < n; o += 512) lim.process(l.data() + o, r.data() + o, std::min<size_t>(512, n - o));
+        peakOut = 0.0f;
+        for (size_t i = n / 2; i < n; ++i) peakOut = std::max(peakOut, std::abs(l[i]));
+        return sineThd(l, f, sr);
+    };
+    for (double f : { 25.0, 50.0, 1000.0, 5000.0 }) {
+        float pkOff = 0, pk1 = 0, pk2 = 0;
+        double off = run(LimiterLookahead::OFF, f, 12.0, pkOff);
+        double la1 = run(LimiterLookahead::MS_1, f, 12.0, pk1);
+        double la2 = run(LimiterLookahead::MS_2, f, 12.0, pk2);
+        std::cout << "  " << f << " Hz, +12 dB over: THD Off " << 100 * off << "%, 1 ms " << 100 * la1
+                  << "%, 2 ms " << 100 * la2 << "%" << std::endl;
+        assert(la1 < 0.0005 && la2 < 0.0005);        // under 0.05%
+        assert(pk1 <= static_cast<float>(ceilLin) && pk2 <= static_cast<float>(ceilLin));
+        if (f >= 50.0) assert(off > 0.02);           // the old limiter really did distort (> 2%)
+    }
+    std::cout << "  -> PASS: lookahead limits to the ceiling without distorting." << std::endl;
+}
+
+void testLimiterLookaheadCeilingAndTruePeak() {
+    std::cout << "[TEST] Limiter lookahead: hard ceiling on hot material, true-peak aware..." << std::endl;
+    const double sr = 48000.0;
+    const float ceilLin = std::pow(10.0f, -0.3f / 20.0f);
+
+    for (auto mode : { LimiterLookahead::MS_1, LimiterLookahead::MS_2 }) {
+        // Dense noise ~+10 dB over with +24 dB transients, odd block sizes.
+        SafetyLimiter lim;
+        lim.setLookahead(mode);
+        lim.prepare(sr);
+        lim.setCeilingDb(-0.3f);
+        size_t n = 48000 * 3;
+        std::vector<float> l(n), r(n);
+        uint32_t seed = 1;
+        auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return ((seed >> 8) / 16777216.0f) * 2.0f - 1.0f; };
+        for (size_t i = 0; i < n; ++i) {
+            float tr = (i % 9600 < 20) ? 8.0f : 0.0f;
+            l[i] = 3.0f * rnd() + tr;
+            r[i] = 3.0f * rnd() - tr;
+        }
+        for (size_t o = 0; o < n; o += 333) lim.process(l.data() + o, r.data() + o, std::min<size_t>(333, n - o));
+        float pk = 0.0f;
+        for (size_t i = 0; i < n; ++i) {
+            assert(std::isfinite(l[i]) && std::isfinite(r[i]));
+            pk = std::max(pk, std::max(std::abs(l[i]), std::abs(r[i])));
+        }
+        std::cout << "  mode " << static_cast<int>(mode) << " hot noise: peak " << 20.0 * std::log10(pk)
+                  << " dBFS, last-resort clamp hits " << lim.getClampCount() << std::endl;
+        assert(pk <= ceilLin);
+        assert(lim.getClampCount() == 0);   // the gain alone held the ceiling
+    }
+
+    // Inter-sample over: fs/4 at 45 degrees puts every sample at 0.707 of the real peak.
+    auto truePeakOf = [&](LimiterLookahead mode) {
+        SafetyLimiter lim;
+        lim.setLookahead(mode);
+        lim.prepare(sr);
+        lim.setCeilingDb(-0.3f);
+        size_t n = 24000;
+        std::vector<float> l(n), r;
+        for (size_t i = 0; i < n; ++i) l[i] = static_cast<float>(2.0 * std::sin(2.0 * TEST_PI * 12000.0 * i / sr + TEST_PI / 4));
+        r = l;
+        lim.process(l.data(), r.data(), n);
+        return 20.0 * std::log10(referenceTruePeak(l, 12000, 13000));
+    };
+    double tpOff = truePeakOf(LimiterLookahead::OFF);
+    double tp1 = truePeakOf(LimiterLookahead::MS_1);
+    std::cout << "  inter-sample test, true peak: Off " << tpOff << " dBFS, 1 ms " << tp1 << " dBFS (ceiling -0.3)" << std::endl;
+    assert(tpOff > 2.0);         // sample-peak limiting lets this through ~3 dB hot, over 0 dBFS
+    assert(tp1 < -0.3 + 0.25);   // the estimate gets within 0.25 dB of the ceiling
+    std::cout << "  -> PASS: sample peak never over the ceiling, true peak held near it." << std::endl;
+}
+
+void testLimiterLookaheadSwitching() {
+    std::cout << "[TEST] Limiter lookahead: switching modes live does not click..." << std::endl;
+    const double sr = 48000.0;
+    SafetyLimiter lim;
+    lim.prepare(sr);
+    lim.setCeilingDb(-0.3f);
+
+    const size_t block = 256;
+    double phase = 0.0;
+    float prev = 0.0f, maxStep = 0.0f;
+    const LimiterLookahead sequence[] = { LimiterLookahead::OFF, LimiterLookahead::MS_1, LimiterLookahead::MS_2,
+                                          LimiterLookahead::OFF, LimiterLookahead::MS_2, LimiterLookahead::MS_1 };
+    for (auto mode : sequence) {
+        lim.setLookahead(mode);
+        for (int b = 0; b < 40; ++b) {
+            std::vector<float> l(block), r(block);
+            for (size_t i = 0; i < block; ++i) {
+                l[i] = r[i] = 0.5f * static_cast<float>(std::sin(phase));
+                phase += 2.0 * TEST_PI * 200.0 / sr;
+            }
+            lim.process(l.data(), r.data(), block);
+            for (size_t i = 0; i < block; ++i) {
+                assert(std::isfinite(l[i]));
+                maxStep = std::max(maxStep, std::abs(l[i] - prev));
+                prev = l[i];
+            }
+        }
+        assert(lim.getActiveLookahead() == mode);
+    }
+    // A 0.5-amplitude 200 Hz sine steps at most 0.5 * 2*pi*200/48000 = 0.013 per sample.
+    std::cout << "  Largest sample step across 5 live switches: " << maxStep << std::endl;
+    assert(maxStep < 0.02f);
+    std::cout << "  -> PASS: every switch fades out and back in." << std::endl;
+}
+
+void testBypassKeepsLatency() {
+    std::cout << "[TEST] Bypass keeps the lookahead latency (and is untouched with Off)..." << std::endl;
+    for (auto mode : { LimiterLookahead::OFF, LimiterLookahead::MS_1, LimiterLookahead::MS_2 }) {
+        AutoLevelEngine engine;
+        engine.prepare(48000.0);
+        EngineParameters p;
+        p.bypass = true;
+        p.limiterLookahead = mode;
+        std::vector<float> l(400, 0.0f), r(400, 0.0f);
+        l[5] = 1.7f; r[5] = -0.9f;     // above the ceiling on purpose: bypass must not limit
+        engine.process(l.data(), r.data(), l.size(), p);
+        int lat = AutoLevelEngine::latencySamples(mode, 48000.0);
+        for (size_t i = 0; i < l.size(); ++i) {
+            bool at = static_cast<int>(i) == 5 + lat;
+            assert(l[i] == (at ? 1.7f : 0.0f) && r[i] == (at ? -0.9f : 0.0f));
+        }
+    }
+    std::cout << "  -> PASS: bypassed audio is only delayed by the reported latency." << std::endl;
+}
+
 int main() {
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ DSP Unit Tests (Android Spec)" << std::endl;
@@ -890,9 +1326,13 @@ int main() {
     testLR4CrossoverSummation();
     testLevelResponseMapping();
     testEbuR128DynamicLoudness();
-    testMbcSpeedBallistics();
+    testMbcAttackRelease();
+    testMbcLiveBallisticsChange();
+    testMbcRmsDetector();
+    testBandEqFlatAndPerBand();
+    testBandEqGainSmoothing();
+    testEqPositionRouting();
     testPostMbcGain();
-    testDynamicAirLift();
     testHighPassFilter();
     testDefaultLimiterCeiling();
     testBreakdownFreezeSensitivity();
@@ -904,6 +1344,11 @@ int main() {
     testLockFreeDoubleBufferedVisualState();
     testSeedGain();
     testMaxCompressionRatio();
+    testLimiterLookaheadLatency();
+    testLimiterLookaheadNoDistortion();
+    testLimiterLookaheadCeilingAndTruePeak();
+    testLimiterLookaheadSwitching();
+    testBypassKeepsLatency();
 
     std::cout << "============================================" << std::endl;
     std::cout << "   ALL DSP TESTS PASSED WITH 100% ACCURACY! " << std::endl;

@@ -20,6 +20,10 @@ public:
                           float sliderPosProportional, float rotaryStartAngle,
                           float rotaryEndAngle, juce::Slider& slider) override;
 
+    void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
+                          float sliderPos, float minSliderPos, float maxSliderPos,
+                          juce::Slider::SliderStyle style, juce::Slider& slider) override;
+
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                           bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 
@@ -60,8 +64,12 @@ public:
     MultibandMeterRack();
 
     void updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
-                      autolevel::dsp::TargetProfile profile,
-                      autolevel::dsp::AirWeight airWeight);
+                      autolevel::dsp::TargetProfile profile);
+
+    /** Layout shared with the editor, which places each band's EQ fader beside its meter. */
+    static constexpr float SCALE_W = 34.0f;
+    static float columnWidth(float rackWidth) noexcept { return (rackWidth - SCALE_W - 16.0f) / static_cast<float>(autolevel::dsp::Bands::COUNT); }
+    static float columnX(size_t band, float rackWidth) noexcept { return SCALE_W + 8.0f + static_cast<float>(band) * columnWidth(rackWidth); }
 
     void paint(juce::Graphics& g) override;
 
@@ -70,7 +78,6 @@ private:
     std::array<float, autolevel::dsp::Bands::COUNT> m_peakGr{};
     std::array<int, autolevel::dsp::Bands::COUNT> m_peakHoldTimers{};
     autolevel::dsp::TargetProfile m_profile = autolevel::dsp::TargetProfile::MODERN_MIX;
-    autolevel::dsp::AirWeight m_airWeight = autolevel::dsp::AirWeight::OFF;
 };
 
 class AutoLevelDJAudioProcessorEditor;
@@ -143,22 +150,27 @@ private:
     juce::TextButton m_modernMixBtn{"MODERN MIX"};
     juce::Label m_profileDescLabel;
 
-    // MBC Speed Switcher (Slow, Normal, Fast)
-    juce::ComboBox m_mbcSpeedBox; // APVTS bound
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_mbcSpeedAttachment;
-    juce::Label m_mbcSpeedLabel;
-    juce::TextButton m_speedSlowBtn{"SLOW"};
-    juce::TextButton m_speedNormalBtn{"NORMAL"};
-    juce::TextButton m_speedFastBtn{"FAST"};
+    // MBC detector (Peak <-> RMS blend) and ballistics
+    juce::Slider m_detectorSlider;
+    juce::Label m_detectorLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_detectorAttachment;
 
-    // Dynamic Air Lift Switcher (Off, Low, Med, High)
-    juce::ComboBox m_airExciterBox; // APVTS bound
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_airExciterAttachment;
-    juce::Label m_airExciterLabel;
-    juce::TextButton m_airExciterOffBtn{"OFF"};
-    juce::TextButton m_airExciterLowBtn{"LOW"};
-    juce::TextButton m_airExciterMedBtn{"MED"};
-    juce::TextButton m_airExciterHighBtn{"HIGH"};
+    juce::Slider m_attackSlider;
+    juce::Label m_attackLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_attackAttachment;
+
+    juce::Slider m_releaseSlider;
+    juce::Label m_releaseLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> m_releaseAttachment;
+
+    // Band EQ: one vertical fader per MBC band (beside that band's meter), plus a Before/After-MBC switch
+    std::array<juce::Slider, autolevel::dsp::Bands::COUNT> m_eqSliders;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, autolevel::dsp::Bands::COUNT> m_eqAttachments;
+    juce::ComboBox m_eqPositionBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_eqPositionAttachment;
+    juce::Label m_eqPositionLabel;
+    juce::TextButton m_eqBeforeBtn{"BEFORE MBC"};
+    juce::TextButton m_eqAfterBtn{"AFTER MBC"};
 
     // Post-MBC Gain stage
     juce::Slider m_postGainSlider;
@@ -197,6 +209,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> m_bypassAttachment;
 
     juce::TextButton m_resetButton{"RESET SET / INTEGRATION"};
+
+    // Limiter lookahead switch in the header (Off / 1 ms / 2 ms) - changes the plugin's latency
+    juce::ComboBox m_lookaheadBox; // APVTS bound
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> m_lookaheadAttachment;
+    juce::Label m_lookaheadLabel;
+    juce::TextButton m_lookaheadOffBtn{"OFF"};
+    juce::TextButton m_lookahead1Btn{"1 MS"};
+    juce::TextButton m_lookahead2Btn{"2 MS"};
 
     autolevel::dsp::EngineVisualState m_latestState;
     float m_maxHeldLimiterGrDb = 0.0f;

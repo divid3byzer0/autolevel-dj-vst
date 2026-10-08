@@ -26,6 +26,9 @@ Audio In (32/64-bit Stereo Float)
 [Makeup Gain Rider] ◄────────────────────── [Leveler with Breakdown Freeze & Asymmetric Slew]
    │
    ▼
+[Band EQ] (optional position: here, before the MBC ...)
+   │
+   ▼
 [6-Band Linkwitz-Riley Crossover]
    ├── Sub       (20 - 120 Hz)     ──► Dynamic Compressor
    ├── Bass      (120 - 400 Hz)    ──► Dynamic Compressor
@@ -36,6 +39,9 @@ Audio In (32/64-bit Stereo Float)
    │
    ▼
 [Summed Bands (Flat Phase / 0 dB Sum)]
+   │
+   ▼
+[Band EQ] (... or here, after it - the default)
    │
    ▼
 [Safety Brickwall Limiter] (Protects DACs & Power Amps from Clipping)
@@ -57,9 +63,17 @@ Audio Out (Clean, Leveled, Punchy Audio to Amps)
 * Rather than using static corrective EQ (which sounds awful when an arrangement naturally lacks bass or drums), tone shaping is performed by a **6-band Linkwitz-Riley (LR4)** dynamic compressor.
 * Thresholds dynamically follow a selectable spectral tilt (e.g. pink noise −3.75 dB/octave).
 * Quiet bands sit safely under their thresholds and remain 100% untouched. Only unruly sub-bass bursts or harsh treble peaks are transparently reeled in.
+* **You set the ballistics:** Attack (1–100 ms) and Release (20–1000 ms) knobs. The Sub band always runs at twice the times you choose.
+* **Peak or RMS:** the Detector knob blends the level detector from pure peak (0%) through to pure RMS (100%). RMS ignores short transients and reacts to sustained energy, so it compresses more gently — a good choice when you want the body of a track controlled without grabbing every drum hit.
 
-### 4. Safety Peak Limiter
-* A final zero-latency peak limiter prevents any transient clip from reaching your digital-to-analog converters or over-driving your amplifiers, with a configurable ceiling (e.g., −0.5 dBFS).
+### 4. Band EQ
+* Six gains on the same six bands as the compressor (Sub, Bass, Low-Mid, High-Mid, Presence, Air), ±12 dB each — each fader sits right next to that band's compressor meter.
+* Sits **after the AGC** and either **before** or **after** the compressor — your choice. After (the default) means what you set is what you hear; before means the compressor reacts to your EQ'd signal.
+* Bit-transparent when every band is at 0 dB. Double-click a fader to reset it.
+
+### 5. Safety Peak Limiter
+* A final peak limiter prevents any transient clip from reaching your digital-to-analog converters or over-driving your amplifiers, with a configurable ceiling (e.g., −0.5 dBFS).
+* **Lookahead (Off / 1 ms / 2 ms, in the header):** Off is a zero-latency limiter that distorts audibly when pushed hard (2–5% THD). 1 ms or 2 ms switches to a lookahead brickwall that holds the ceiling — including inter-sample peaks — without distorting, at the cost of exactly that much latency. Switching is click-free.
 
 ---
 
@@ -147,8 +161,13 @@ Pre-compiled binary packages for macOS and Windows are published under [GitHub R
 | **Max Boost** | 0 to 18 dB | **+12 dB** | Maximum upward gain the leveler can apply. |
 | **Max Cut** | 0 to 18 dB | **−12 dB** | Maximum downward attenuation for hot tracks. |
 | **Slew Speed** | Slow / Normal / Fast | **Normal** | AGC gain-change speed once a new target is computed: 0.5/0.75/1.5 dB/s upward (2x that downward). Separate from Level Response, which controls how fast the loudness *measurement* itself reacts. |
-| **MBC Speed** | Slow / Normal / Fast | **Normal** | Multiband compressor attack/release ballistics — a different stage from Slew Speed above (see [docs/PLUGIN_DOCUMENTATION.md](docs/PLUGIN_DOCUMENTATION.md) for the full signal chain). |
+| **Detector** | Peak (0%) to RMS (100%) | **Peak** | What the compressor listens to. In between blends the two. RMS reads lower than peak on real music, so it compresses less at the same settings. |
+| **MBC Attack** | 1 to 100 ms | **15 ms** | How fast the compressor clamps down. The Sub band runs at 2× this. A different stage from Slew Speed above. |
+| **MBC Release** | 20 to 1000 ms | **200 ms** | How fast it lets go. The Sub band runs at 2× this. |
+| **EQ Sub … Air** | −12 to +12 dB | **0 dB** | Six-band EQ on the compressor's bands. |
+| **EQ Position** | Before MBC / After MBC | **After MBC** | Where the EQ sits relative to the compressor. Always after the AGC. |
 | **Breakdown Freeze** | On / Off | **On** | Freezes upward gain boost during breakdowns and quiet intros. |
+| **Lookahead** | Off / 1 ms / 2 ms | **Off** | Safety limiter lookahead. 1–2 ms = clean limiting when pushed, adds 1–2 ms latency (reported to the host). Off = zero latency. |
 | **Amp Ceiling** | −3.0 to 0.0 dBFS | **−0.3 dBFS** | Brickwall ceiling guarding audio converters and power amps. |
 | **Reset Set** | Button | — | Clears integrated loudness history and locks onto incoming track. |
 
