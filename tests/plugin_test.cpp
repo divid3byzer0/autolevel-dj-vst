@@ -318,8 +318,46 @@ int snapshot(const char* path) {
     return juce::PNGImageFormat().writeImageToStream(img, os) ? 0 : 1;
 }
 
+/**
+ * `plugin_test --render in.f32 out.f32 [hostBlock]`: run interleaved stereo float32 at 48 kHz
+ * through the plugin at its defaults and write what comes out, with the plugin's latency block
+ * (256 frames) removed so it lines up with a box render. For comparing against the box built
+ * its own way (tools/box_render in autolevel-core, or the box itself).
+ */
+int render(const char* inPath, const char* outPath, int hostBlock) {
+    juce::MemoryBlock raw;
+    if (!juce::File::getCurrentWorkingDirectory().getChildFile(inPath).loadFileAsData(raw)) return 1;
+    const size_t frames = raw.getSize() / (2 * sizeof(float));
+    const float* in = static_cast<const float*>(raw.getData());
+    Proc proc;
+    proc.setPlayConfigDetails(2, 2, 48000.0, hostBlock);
+    proc.prepareToPlay(48000.0, hostBlock);
+    std::vector<float> out;
+    out.reserve(frames * 2);
+    juce::MidiBuffer midi;
+    for (size_t pos = 0; pos < frames; pos += static_cast<size_t>(hostBlock)) {
+        const int blk = static_cast<int>(std::min<size_t>(static_cast<size_t>(hostBlock), frames - pos));
+        juce::AudioBuffer<float> buf(2, blk);
+        for (int i = 0; i < blk; ++i) {
+            buf.setSample(0, i, in[(pos + static_cast<size_t>(i)) * 2]);
+            buf.setSample(1, i, in[(pos + static_cast<size_t>(i)) * 2 + 1]);
+        }
+        proc.processBlock(buf, midi);
+        for (int i = 0; i < blk; ++i) {
+            out.push_back(buf.getSample(0, i));
+            out.push_back(buf.getSample(1, i));
+        }
+    }
+    const size_t skip = static_cast<size_t>(Proc::BOX_BLOCK) * 2;
+    juce::File o = juce::File::getCurrentWorkingDirectory().getChildFile(outPath);
+    o.deleteFile();
+    return o.replaceWithData(out.data() + skip, (out.size() - skip) * sizeof(float)) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;
+    if ((argc == 4 || argc == 5) && std::string(argv[1]) == "--render")
+        return render(argv[2], argv[3], argc == 5 ? std::atoi(argv[4]) : 512);
     if (argc == 3 && std::string(argv[1]) == "--snapshot") return snapshot(argv[2]);
     std::cout << "============================================" << std::endl;
     std::cout << "   AutoLevel DJ plugin tests (box parity)" << std::endl;
