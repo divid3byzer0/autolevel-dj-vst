@@ -1,539 +1,170 @@
 # AutoLevel DJ — Full Technical Documentation
 
-This document is the long-term reference for this project: what the plugin does, how every
-piece of the signal chain works, what every parameter actually does (and its real vs.
-documented range/default), and a changelog of anything altered outside of normal feature work
-(bug fixes, calibration corrections, doc corrections). It exists so that returning to this
-project after a long gap — or handing it to someone else — doesn't require re-deriving any of
-this from the source.
+This document is the long-term reference for the plugin: how it reproduces autolevel-box, every
+parameter and how it maps onto the box's, presets, session compatibility, and a changelog. Where
+this document and the code disagree, **the code is the source of truth** — but please update this
+doc in the same change if you touch behavior described here.
 
-It complements, but does not replace, [README.md](../README.md) (user-facing pitch/build
-instructions) and the inline comments in the source itself. Where this document and the code
-disagree, **the code is the source of truth** — but please update this doc in the same change
-if you touch behavior described here.
+It complements [README.md](../README.md) (user-facing description, controls, build instructions).
+**The DSP itself is documented with the engine**: autolevel-box's `docs/TECHNICAL_DOCUMENTATION.md`
+(§2 signal chain, §3 every stage, §4 the parameter store) and autolevel-core's README.
 
 ---
 
 ## 1. What this plugin is
 
-AutoLevel DJ is a VST3 / AU / Standalone audio plugin (JUCE 8, C++20) meant to sit on the
-**master output** of a DJ mixer/software, before the signal reaches the PA / power amps. It is
-the VST sibling of two other AutoLevel projects (see the parent memory notes if you maintain
-all three): an Android app that loudness-matches a phone's music player session, and
-`autolevel-box`, a headless Raspberry Pi daemon doing the same job in hardware. All three share
-DSP lineage — fixes are ported between them (see `git log` for "port v2.0 DSP fixes from
-autolevel-box").
+AutoLevel DJ is the autolevel-box appliance as a VST3 / AU / Standalone plugin (JUCE 8.0.6).
+Since v3.0.0 it has no DSP of its own: it builds **autolevel-core**
+(`external/autolevel-core`, git submodule), the engine the box builds, and drives it the way the
+box does. The goal, set 2026-11-06: the plugin on a Mac sounds exactly like the box, with the
+box's settings, minus Bluetooth and the Pi's audio I/O.
 
-The problem it solves: a DJ set strings together tracks mastered decades and genres apart
-(disco at −14 LUFS vs. modern EDM at −6 LUFS), and naive automatic gain control either pumps
-during blended transitions or blows up gain during a quiet breakdown right before a drop. This
-plugin's job is to even out perceived loudness across tracks and to shape tone consistently,
-without those two failure modes.
+## 2. How parity is achieved
 
----
+Three things, all in `src/PluginProcessor.*`:
 
-## 2. Signal chain
+1. **Same engine, same parameter store.** The processor owns an `autolevel::AudioEngine` — the
+   box's own class: input sanitising, parameter clamping, and the chain
+   (AGC → Air Lift → Pre-MBC EQ → 6-band MBC → Post Gain → Low Cut → true-peak limiter).
+2. **One host parameter per box parameter.** `kHostIds[]` maps each `AudioEngine::Param` to a
+   host parameter ID; ranges and defaults are the box's. Values cross over with
+   `toEngineValue()` / `toHostValue()`, the identity except Low Cut's "Off" (host 19.5 ↔
+   engine 0). Before each engine block the processor pushes every value with the
+   allocation-free `setParam(Param, float)`. Ranges snap to exact decimal floats
+   (`decimalRange()`), so 0.85 is the same float the box parses, not 85 × 0.01f.
+3. **The box's block size.** The box's JACK callback always processes 256 frames. The Leveler
+   updates once per `process()` call (target, slew step, a gain ramp across the block) and its
+   fast-lock timer adds whole milliseconds per call, so other block sizes give a different
+   result: about −70 dBFS for typical sizes, and under 1 ms per call (48 frames at 48 kHz) the
+   fast lock never ends. `processChunked()` therefore collects host audio into 256-frame blocks
+   and returns the previous block, processed. This costs **256 frames of latency**.
 
-Every audio block passes through these stages in this exact order (see
-`AutoLevelEngine::process()` in [`src/dsp/AutoLevelEngine.h`](../src/dsp/AutoLevelEngine.h)):
+**Latency** reported to the host: `BOX_BLOCK + AudioEngine::latencyFrames()` = 256 + the
+limiter's lookahead (102 frames at 48 kHz) = **358 frames (7.5 ms) at 48 kHz**. Constant:
+bypass runs the same path.
 
-```
-Input (stereo float)
-  │
-  ▼
-[0] Input sanitizer — clamps to ±8.0, zeroes NaN/Inf (bit-pattern check, not std::isnan/isinf)
-  │
-  ▼
-[1] LoudnessMeter — ITU-R BS.1770-4 K-weighting + EBU R128 gated integration
-  │     produces: momentary (400ms), short-term (3s), integrated (gated whole-history) LUFS
-  ▼
-[2] Leveler (AGC) — computes target gain from (targetLUFS - integratedLUFS), clamped to
-  │     [-maxCutDb, +maxBoostDb], asymmetric slew-rate limited, with breakdown-freeze
-  ▼
-[3] BandEQ  (only when "EQ Position" = Before MBC)
-  ▼
-[4] MultibandCompressor (MBC) — 6-band Linkwitz-Riley crossover, per-band soft-knee
-  │     compression (user attack/release, Peak<->RMS detector, thresholds on the tonal
-  │     target curve), phase-corrected recombination (no makeup gain — see [5])
-  ▼
-[4b] BandEQ  (only when "EQ Position" = After MBC, the default)
-  ▼
-[5] Post-MBC Gain — simple manual trim (dB), applied only if |gain| > 0.01 dB; the only
-  │     makeup stage for the MBC's gain reduction since auto-makeup was removed (2026-09-29)
-  ▼
-[6] HighPassFilter — 4th-order (24 dB/oct) Butterworth low cut, 20–50 Hz
-  ▼
-[7] SafetyLimiter — "Lookahead" Off: 1ms attack / 60ms release, 20:1 ratio, plus a hard
-  │     sample clamp at the ceiling (zero latency). 1 ms / 2 ms: lookahead true-peak-aware
-  │     brickwall that does not distort when pushed (adds exactly that much latency) — §3.8
-  ▼
-Output (stereo float) → also feeds a lock-free 3-buffer "visual state" the UI thread reads at 60Hz
-```
+**Bypass.** `getBypassParameter()` returns the `bypass` parameter, so a host's bypass button
+drives the box's own bypass, which keeps the audio flowing through the limiter's delay line
+untouched. `processBlockBypassed()` (hosts that bypass without the parameter) runs the same path
+forced to bypass. Either way the latency never changes.
 
-This exact order matters: Post-Gain and the HPF both run *after* the MBC but *before* the
-limiter, so manual trim and subsonic cleanup are still caught by the final safety stage. The
-Band EQ runs at exactly one of its two spots ([3] or [4b]), chosen by the "EQ Position" switch —
-always after the AGC, always before Post Gain and the limiter. (Stage [3] used to be the
-DynamicAirLift, removed 2026-10-08 — §3.4.)
+**Not done on purpose.** `releaseResources()` does not reset the engine: the box never clears its
+loudness history on its own, so a DAW stopping the transport doesn't either. `prepareToPlay()`
+starts fresh (as a box restart does).
 
-### Why the DSP core has no JUCE dependency
+### Verification
 
-Everything under `src/dsp/` is plain C++20 (`<cmath>`, `<array>`, `<atomic>`, …) with zero JUCE
-includes. This is deliberate: `tests/dsp_test.cpp` links and runs `src/dsp/*` directly, without
-fetching or building JUCE, so the DSP correctness suite is fast to run and has no external
-dependency:
+- `tests/plugin_test.cpp` (built as `plugin_test`, run by CI): the processor against
+  `AudioEngine` driven like the box, compared **bit for bit** after the 256-frame delay — at the
+  defaults and with every setting changed; at 44.1, 48 and 96 kHz; with host blocks of 1 to 2048
+  frames, fixed and ragged. Also: every default and every range end equals the box's; bypass is
+  untouched audio at the full latency; presets; session state.
+- Against the box **as built** (autolevel-core `tools/box_render`, compiled with the box's
+  `-O3 -ffast-math -fno-finite-math-only`): `plugin_test --render` output differs by at most
+  −138 dBFS on a 60 s program (below 24-bit resolution), and is identical to a render built
+  without fast-math. The difference is the compiler's rounding, not the processing; the Pi build
+  (GCC, ARM) rounds its own way too.
+- `auval -v aufx AlDj DstN`: passes.
 
-```bash
-clang++ -std=c++20 -O0 -g -Isrc -UNDEBUG -o dsp_test tests/dsp_test.cpp
-./dsp_test
-```
+## 3. Parameter reference
 
-`src/PluginProcessor.*` and `src/PluginEditor.*` are the only JUCE-dependent files — they're
-thin glue: parameter management (`AudioProcessorValueTreeState`) and the GUI. If you add new
-DSP behavior, prefer putting the math in `src/dsp/` (testable, portable) and keep
-`PluginProcessor.cpp` limited to reading parameters and calling into the engine.
-
----
-
-## 3. DSP modules, in detail
-
-### 3.1 Input sanitizer (inline in `AutoLevelEngine::process`)
-
-Runs first, unconditionally (as long as the block isn't bypassed/empty). For every sample, it
-reads the raw bit pattern and checks whether the exponent field is all-ones (`0x7f800000`),
-which is true for both NaN and ±Inf regardless of mantissa. Anything matching becomes `0.0f`;
-everything else is clamped to `[-8.0, 8.0]`. This exists because a misbehaving upstream plugin
-or device can and does occasionally emit NaN/Inf, and letting that reach an IIR filter's state
-variables would corrupt them permanently (a single NaN in a biquad's `z1`/`z2` propagates
-forever). Verified in `tests/dsp_test.cpp::testInputSanitizerAntiNan`.
-
-### 3.2 LoudnessMeter (`src/dsp/LoudnessMeter.h`)
-
-Implements ITU-R BS.1770-4 K-weighting (`KWeightingFilter`, a cascaded high-shelf + high-pass
-biquad pair, coefficients per the standard reference formula) followed by EBU R128-style
-gated loudness integration:
-
-- **Momentary** — mean power of the last 4× 100ms steps (400ms window), converted to LUFS.
-- **Short-term** — mean power of the last 30× 100ms steps (3s window).
-- **Integrated** — a running 0.1-LUFS-resolution histogram (`-100` to `+15` LUFS, 1151 bins)
-  with EBU R128's two-stage gating: an absolute gate at −70 LUFS, then a relative gate at
-  (ungated mean − 10 LU). This is a *running*, causal estimate — it only gets more accurate as
-  more of the track plays, same as any real-time loudness meter; there is no "look ahead."
-- The momentary/short-term ring buffers are zero-initialized, so for the first ~400ms
-  (momentary) / ~3s (short-term) after `reset()`, those two readings ramp up from an
-  artificially low value rather than reporting "not enough data yet." This only affects the UI
-  readout during that window — it does **not** cause a false breakdown-freeze trigger (verified
-  by direct test: the momentary/integrated delta stays negative during ramp-up, never crossing
-  the freeze threshold in the wrong direction).
-- `setLevelResponse(0..1)` maps to a histogram decay half-life (`halfLifeForResponse`):
-  `0.0` → infinite memory (whole-track average, "Track Hold"), `1.0` → 4 second half-life. This
-  is the **"Level Response"** UI parameter. It controls how fast the *measurement* (the
-  integrated LUFS estimate) forgets old material — **not** how fast the applied gain moves once
-  a new target is computed (that's the Leveler's slew rate, see 3.3).
-
-### 3.3 Leveler / AGC (`src/dsp/Leveler.h`)
-
-Computes `rawDesired = targetLUFS - integratedLUFS`, clamps it to `[-maxCutDb, +maxBoostDb]`,
-then moves the *applied* gain toward that target with an **asymmetric slew rate**:
-
-| State | Upward rate | Downward rate |
-|---|---|---|
-| Fast lock (first 8s after `reset()`) | 4.0 dB/s (fixed, all speeds) | 16.0 dB/s (4×, fixed, all speeds) |
-| Steady state, Slew Speed = Slow | 0.5 dB/s | 1.0 dB/s (2×) |
-| Steady state, Slew Speed = Normal (default) | 0.75 dB/s | 1.5 dB/s (2×) |
-| Steady state, Slew Speed = Fast | 1.5 dB/s | 3.0 dB/s (2×) |
-
-Downward moves are always faster than upward — a track coming in "too hot" gets pulled down
-quickly (protects the room/ears), while a quiet track gets boosted slowly and musically (avoids
-audible pumping on transitions). The **"Slew Speed"** parameter (`LevelerParams::speed`,
-`LevelerSpeed::{SLOW,NORMAL,FAST}`) only affects the *steady-state* rate — the 8-second
-"fast lock" window after `reset()` always uses its own fixed 4.0/16.0 dB/s rates regardless of
-this setting, since fast-lock is about establishing an initial baseline quickly, a different
-concern from steady-state reactivity. This is **distinct from "MBC Attack / Release"** (§3.5), which
-govern the multiband compressor's per-band ballistics, not the AGC gain rider. It's also
-distinct from **"Level Response"** (§3.2), which controls how fast the *measurement* (integrated
-LUFS estimate) reacts — Slew Speed controls how fast the *applied gain* chases whatever that
-measurement currently says. The "fast lock" window only starts counting once
-`blocksIntegrated >= 5` (~500ms of valid, gated audio) and only resets via `Leveler::reset()`
-(wired to the "Reset Set / Integration" button, or `prepareToPlay`) — it does **not**
-automatically reset at the start of every new track, only on manual reset or plugin
-(re)initialization.
-
-**Breakdown freeze:** if `integratedLUFS - momentaryLUFS > breakdownThresholdLU` (currently
-hardcoded at 7 LU — not user-adjustable, see §5), upward gain movement is frozen (downward is
-still allowed) until the momentary level recovers. This is what stops the leveler from boosting
-gain into a quiet breakdown right before a drop.
-
-The actual gain is applied to audio via `Leveler::processBlock()`, which linearly interpolates
-the *linear* gain across the block sample-by-sample (not a step change), avoiding zipper noise.
-
-### 3.4 Dynamic Bass Lift / Air Lift — removed
-
-Both adaptive "lift" stages are gone. **Bass Lift** (`DynamicBassLift.h`, the "Sub Weight"
-control) was removed on 2026-09-11; **Air Lift** (`DynamicAirLift.h`, the "Air Exciter" /
-"AIR: OFF LOW MED HIGH" control, a sidechain-driven dynamic high shelf above ~6.5 kHz with a
-sibilance ducker) on 2026-10-08, at the owner's request. Nothing replaces them automatically;
-the manual Band EQ (§3.5.2) is the way to add bass or air now. See the changelog (§8) for what
-each removal touched and, in the 2026-09-11 entries, how Air Lift used to work.
-
-### 3.5 MultibandCompressor / MBC (`src/dsp/MultibandCompressor.h`, `BandSplitter.h`, `Bands.h`, `Biquad.h`)
-
-The most involved module. Splits the signal into 6 bands via a tree of 4th-order
-Linkwitz-Riley (LR4) crossovers at 120 / 400 / 1200 / 3500 / 8000 Hz (the tree lives in
-`BandSplitter.h`; the Band EQ does not use it, §3.5.2),
-compresses each band independently (6 dB soft-knee, per-band attack/release), then sums the
-bands back together.
-
-**Bands and ballistics:**
-
-| # | Name | Range | Attack | Release |
+| Host ID | Box ID (`AudioEngine`) | Range | Default | Notes |
 |---|---|---|---|---|
-| 0 | Sub | 20–120 Hz | 2 × MBC Attack | 2 × MBC Release (max 5000 ms) |
-| 1 | Bass | 120–400 Hz | MBC Attack | MBC Release |
-| 2 | Low-Mid | 400–1200 Hz | MBC Attack | MBC Release |
-| 3 | High-Mid | 1200–3500 Hz | MBC Attack | MBC Release |
-| 4 | Presence | 3500–8000 Hz | MBC Attack | MBC Release |
-| 5 | Air | 8000–20000 Hz | MBC Attack | MBC Release |
+| `target_lufs` | `target_lufs` | −20 … −6 LUFS, 0.5 | −14 | Also sets MBC thresholds (target − 18 dB) |
+| `max_boost` | `max_boost` | 0 … 18 dB, 0.5 | 12 | Not on the box's web UI; in its presets/API |
+| `max_cut` | `max_cut` | 0 … 18 dB, 0.5 | 12 | As above |
+| `level_response` | `level_response` | 0 … 1, 0.01 | 0.85 | Loudness memory half-life |
+| `slew_speed` | `slew_speed` | Slow / Normal / Fast | Normal | Choice index = box value |
+| `freeze_breakdowns` | `freeze_breakdowns` | bool | on | |
+| `breakdown_threshold` | `breakdown_threshold_lu` | 3 … 15 LU, 0.5 | 7 | New in v3; UI buttons 5 / 7 / 9 as on the box |
+| `air_lift` | `air_exciter` | Off / Low / Med / High | Off | New in v3 |
+| `eq_sub` … `eq_air` | `pre_eq_band_0` … `_5` | ±12 dB, 0.1 | 0 | v2 IDs kept; now the box's pre-MBC bells |
+| `compression_amount` | `compression_amount` | 0 … 1, 0.01 | 0.5 | Ratio 1 + amount × 4 (up to 5:1) |
+| `tone_slope` | `tone_slope` | −3 … 0 dB/oct, 0.1 | 0 | v2 default was −1.5 |
+| `contour_sub` … `contour_air` | `custom_band_0` … `_5` | ±12 dB, 0.1 | 0 | New in v3; replaces Target Profile |
+| `mbc_attack` | `mbc_attack_ms` | 1 … 100 ms, 0.1, skewed | 15 | Sub ×2 |
+| `mbc_release` | `mbc_release_ms` | 20 … 1000 ms, 1, skewed | 200 | Sub ×2; v2 allowed 5000 |
+| `mbc_release_mode` | `mbc_auto_release` | Manual / Auto | Manual | Choice index = box bool |
+| `mbc_detector` | `mbc_detector_rms` | 0 … 1, 0.01 | 0 (Peak) | |
+| `post_mbc_gain` | `post_mbc_gain` | ±24 dB, 0.1 | 0 | v2 was ±12 |
+| `hpf_freq` | `hpf_freq` | Off (19.5), 20 … 50 Hz, 0.5 | 30 | Host 19.5 = engine 0 = Off |
+| `ceiling_db` | `ceiling_db` | −3 … 0 dBFS, 0.1 | −0.3 | |
+| `bypass` | `bypass` | bool | off | Host bypass parameter |
 
-**Attack / Release are user parameters** (`mbc_attack` 1–100 ms, default 15; `mbc_release`
-20–5000 ms, default 200 — the range went up from 1000 ms on 2026-10-09). They replaced the old Slow/Normal/Fast "MBC Speed" preset (§8). The
-defaults equal the old Normal preset, so a session that never touches them sounds as before. The
-Sub band keeps its long-standing 2× factor (30 ms / 400 ms at the defaults) — broadcast chains
-run the bass slower — with its release capped at 5000 ms, so from 2500 ms up it runs at the same
-5000 ms as the other bands. Changing them while audio runs only swaps filter coefficients: the
-envelopes keep going, so turning the knob never snaps the gain reduction to zero
-(`testMbcLiveBallisticsChange`). **This is a completely different control from the AGC's
-"Slew Speed"** (§3.3, §4) — it only affects how quickly each band's compressor reacts, not how
-fast the overall gain rider moves.
+Removed in v3: `target_profile` (Modern Mix = contour +1.5, −2.5, +0.5, +1.0, −2.0, +1.5),
+`eq_position`, `limiter_lookahead`. Version hints: v2 IDs keep 1, new IDs use 3.
 
-**Release mode — Manual / Auto (`mbc_release_mode`, default Manual).** Manual is the single
-envelope described above, bit-identical to v2.2.0. Auto is a program-dependent (dual-envelope)
-release: each band also runs a *slow* envelope on the same detector level — attack 300 ms (Sub
-600 ms), release 10 × the band's release (capped at 5000 ms) — and the gain follows whichever
-envelope is higher. A short hit barely charges the slow envelope, so it recovers at the Release
-time exactly as Manual; sustained compression charges both, so when it stops the gain comes back
-on the slow release instead of pumping; on steady material both read the same level, so the
-amount of compression is unchanged. Measured on a 700 Hz tone, Release 200 ms
-(`testMbcLongReleaseAndAutoRelease`):
+## 4. Presets
 
-| | 200 ms after a 10 ms hit | 500 ms after 3 s of loud | GR at the end of 3 s of loud |
-|---|---|---|---|
-| Manual | −2.13 dB | −0.68 dB | −13.89 dB |
-| Auto | −2.13 dB | −12.03 dB | −13.89 dB |
+`PRESETS` in the header loads and saves **box-format JSON** — byte for byte what the box's
+`AudioEngine::getStateJson()` writes, so a file moves freely between the box's preset folder
+(`~/.local/share/autolevel-box/presets/` on the Pi) and the plugin (default folder
+`~/Documents/AutoLevel/Presets`).
 
-The slow envelope is tracked in Manual too, so switching to Auto never starts from a stale value;
-switching back carries the combined level into the normal envelope, so the gain releases from
-where it was (largest GR change measured: 0.03 dB per ms).
+- **Load** (`loadPresetJson`): parsed by the box's own `loadStateFromJson` into a fresh engine
+  (box defaults first, then the preset's fields, clamped; pre-2026-10-03 `mbc_speed` migrated),
+  then written to the host parameters, so the result is automatable and saved with the session.
+  The preset's `bypass` is ignored: loading a preset never bypasses the plugin.
+- **Save** (`getPresetJson`): the current host parameters through the box's serialiser.
+- **Reset to Default**: every parameter to its default = the box's "Default" preset.
 
-**Level detector — Peak <-> RMS (`mbc_detector`, 0..1, default 0 = Peak).** Each band's detector
-is a blend: `level = (1 − m)·peak + m·rms`, where `peak` is the stereo-linked `max(|L|,|R|)` and
-`rms` is `sqrt(2 · mean-square)` of the same linked signal, averaged over a one-pole 30 ms window.
-The attack/release ballistics are then applied to the blended level, as before. Two properties
-worth knowing:
+## 5. Sessions and v2 compatibility
 
-- **Sine-calibrated.** The `2·` makes a steady tone read the same amplitude in both modes, so
-  switching detector does not change how a steady bass note is treated; the two differ only on
-  how *peaky* the material is. On real music RMS reads well below peak, so **RMS mode compresses
-  noticeably less at the same threshold** (raise Compression, or lower Target LUFS which lowers
-  the threshold, to compensate). Measured on a high-crest-factor burst signal at 1 ms attack:
-  Low-Mid GR −11.3 dB (peak) / −9.5 dB (50%) / −7.6 dB (RMS).
-- **Ballistics already smooth the peak path.** With the 15 ms default attack a 1 ms burst barely
-  moves the peak envelope either, so Peak and RMS sound closest at slow attack settings and
-  furthest apart at fast ones.
+State is the APVTS tree as XML (`stateVersion` 3). On load, parameters the saved state lacks
+are filled in with their defaults *in the tree* before `replaceState()` (no
+`setValueNotifyingHost`, so restoring a session doesn't mark it edited). A v2 session therefore
+keeps every setting that still exists — clamped to the box's ranges — ignores removed ones, and
+gets the box defaults for the new ones.
 
-At 0 (Peak) the code path is bit-identical to before the detector existed
-(`testMbcRmsDetector`; and a bit-for-bit comparison of old vs new compressor output at default
-settings on a 6 s test signal was run when this was added — see §8). The RMS average is tracked
-even at 0, so moving the slider off Peak never starts from a stale value; only the `sqrt` is
-skipped. The limiter stays a pure peak detector — it must.
+## 6. UI
 
-**Phase-corrected recombination:** naively summing an LR4 low-pass and high-pass from the same
-crossover does *not* reconstruct flat — it sums to a 2nd-order allpass at the crossover
-frequency, not unity. A tree of several such crossovers (as used here) would otherwise produce
-audible notches (one was measured at 5.13 dB at 1200 Hz before this was fixed — see `git log`
-for "Fix 6-band crossover phase alignment"). Each band is now passed through the allpasses of
-whichever crossovers its own path *didn't* go through
-(`MultibandCompressor::AP_COMPENSATION` table + `AllpassLR4`/`Biquad::Type::Allpass`), which
-cancels this out. `tests/dsp_test.cpp::testLR4CrossoverSummation` verifies flat magnitude
-reconstruction across 14 test frequencies spanning all 6 bands to better than 0.10 dB (measured
-worst case: ~3×10⁻⁷ dB — i.e. essentially exact).
+The v2 layout and look are kept (`src/PluginEditor.*`, fixed 840×700 canvas scaled to the
+window). Changes for v3: header **PRESETS** (replaces the lookahead switch); **Air Lift** row and
+live lift readout in the Tonal Target card (replaces the profile buttons); breakdown sensitivity
+**5LU / 7LU / 9LU** beside the freeze toggle; Tone Shaper header **FADERS: CONTOUR / PRE-EQ**
+choosing what the six band faders edit (replaces the EQ position switch), like the box's canvas
+modes. The tone curve and the badges under each meter show the contour.
+`plugin_test --snapshot out.png` renders the editor to an image after 12 s of audio.
 
-**Per-band thresholds** (`Bands::thresholdsFor`) are computed from: a tone-slope tilt (power
-per octave, "Tone Slope"/"Tone Tilt" parameter) + a bandwidth term (so wider bands get a higher
-threshold, correcting for the fact they naturally carry more energy) + an optional profile
-contour offset (`MODERN_MIX` applies genre-tuned per-band offsets; `PINK_NOISE` applies none;
-`CUSTOM` would apply arbitrary user offsets but **is not reachable from the actual plugin UI**
-— the "Target Profile" combo box only offers 2 of the 3 `TargetProfile` enum values). The whole
-curve is then re-centered so its average equals `baseThresholdDb`, preserving overall
-calibration regardless of slope/contour.
-
-**`baseThresholdDb` and the Target-LUFS coupling (important — see §5):**
-`mbcParams.baseThresholdDb = params.targetLUFS - 15.0f`. This means the MBC's absolute
-threshold level tracks the AGC's Target LUFS parameter. `Bands::MBC_THRESHOLD_DB` (−24 dBFS) is
-the "canonical" calibration point this formula is designed to hit — but only when Target LUFS
-is at −9. At the plugin's actual shipped default (Target LUFS = −14), `baseThresholdDb` comes
-out to **−29 dBFS**, not −24 — the MBC is measurably more aggressive at default settings than
-the "exactly matches Android Shaper.kt" calibration the rest of the code (constants, tests)
-assumes. This was found and the misleading comment fixed on 2026-09-11 (§8); the numeric
-*behavior* itself was intentionally left unchanged (targetLUFS = −14 is confirmed correct) — if
-recalibrating the MBC to track −24 dBFS at the real default is ever wanted, change the `15.0f`
-offset to `10.0f` (`-14 - 10 = -24`), understanding that this changes live audio behavior for
-every preset that doesn't override Target LUFS.
-
-**No makeup gain (auto-makeup removed 2026-09-29, §8):** the MBC's output level drops by
-whatever gain reduction it applies; the Post Gain parameter (§3.6) is where that is made up by
-hand.
-
-### 3.5.2 BandEQ (`src/dsp/BandEQ.h`)
-
-Six gain controls on the MBC's six bands — `eq_sub`, `eq_bass`, `eq_lowmid`, `eq_highmid`,
-`eq_presence`, `eq_air`, each ±12 dB — and an `eq_position` switch (Before MBC / After MBC,
-default After) that puts the EQ either just ahead of the MBC or just behind it. Always after the
-AGC, always before Post Gain, the Low Cut and the limiter. In the UI each band's fader sits
-beside that band's gain-reduction meter in the Tone Shaper card, and the switch is in that
-card's header (where the Air Lift buttons were).
-
-**Filter shapes.** The four middle bands are RBJ peaking filters centred on the band's geometric
-centre (219 / 693 / 2049 / 5292 Hz) and as wide in octaves as the band itself. Sub is a low shelf
-cornered at 120 Hz and Air a high shelf cornered at 8 kHz, so they cover everything beyond their
-outer edge, as the compressor's outer bands do. The slider value is (nearly) the gain you get at
-the band centre: exact for the four bells, 92–97% for the two shelves' centres
-(`testBandEqFlatAndPerBand`). Neighbouring bands overlap smoothly — a +9 dB Bass boost leaks
-+1.7 dB into Low-Mid's centre.
-
-*Why not the compressor's LR4 split with a gain per band?* Tried first. It is literally "the same
-bands", but a −9 dB cut only reached −5.6 dB at the Presence centre (neighbours' skirts leak
-back in), and an untouched EQ was a phase-rotating allpass chain rather than a passthrough. The
-bell/shelf version is accurate and, at 0 dB, an **exact passthrough** — every band is the
-identity filter, so the EQ is bit-transparent until moved (asserted sample-for-sample).
-
-**Smoothing.** Gains glide in dB with a ~15 ms time constant and the filters are retuned every
-16 samples, so moving a band never zippers (`testBandEqGainSmoothing`). A band returning to 0 dB
-snaps onto the exact passthrough once within 0.005 dB.
-
-**Before vs After.** After MBC is the default: the compressor never sees the EQ, so what you set
-is what you hear. Before MBC feeds the compressor the EQ'd signal — boosting Presence +9 dB makes
-that band's compressor work ~6 dB harder in the test (`testEqPositionRouting`) and nets less
-output level than the same boost after. Switching position live can click if the EQ is boosted
-hard (the filters keep their state, but the signal they see changes under them); at flat settings
-it is inaudible.
-
-### 3.6 Post-MBC Gain
-
-A single manual trim (`postMbcGainDb`, ±12 dB), applied as a flat linear multiply, skipped
-entirely (not even a unity multiply) when `|dB| ≤ 0.01` to save a pass over the buffer.
-
-### 3.7 HighPassFilter (`src/dsp/HighPassFilter.h`)
-
-4th-order Butterworth high-pass (two cascaded 2nd-order sections, Q₁≈0.5412, Q₂≈1.3066 — the
-correct pole pair for a maximally-flat 4th-order Butterworth, not two identical 2nd-order
-sections), 20–50 Hz cutoff. Verified against theoretical response (−3.01 dB at cutoff, ~−24 dB
-one octave below) in `testHighPassFilter`. There is no separate on/off control in the UI — the
-parameter range (20–50 Hz) never allows a value that would disable it
-(`hpfEnabled = hpfCutoffHz >= 20.0f` is always true given that range), so this filter is
-effectively always active. This matches the shipped UI (only a frequency knob, no toggle), not
-a bug.
-
-### 3.8 SafetyLimiter (`src/dsp/SafetyLimiter.h`)
-
-Two engines, picked by the **Limiter Lookahead** parameter (`limiter_lookahead`: Off / 1 ms /
-2 ms, default Off).
-
-**Off — the original limiter, zero latency, bit-identical to before** (checked sample for
-sample, audio and GR meter, on 8 s of hot noise with transients, odd block sizes and ceiling
-changes). 1ms attack / 60ms release, 20:1 ratio on the stereo-linked peak envelope, **plus** a
-hard per-sample clamp to `±ceilingLin`. Measured: a steady sine pushed only 3 dB over the
-ceiling comes out at ~2–3% THD and ~4.5–5.7% at +12 dB, at every frequency from 25 Hz to 5 kHz —
-the 1 ms attack lets the front of every peak through and the clamp squares it off. It also only
-sees sample peaks: an inter-sample-over test signal leaves it at **+2.7 dBFS true peak**.
-
-**1 ms / 2 ms — lookahead brickwall.** Latency is exactly the lookahead (48 / 96 samples at
-48 kHz, 44 / 88 at 44.1 kHz; `SafetyLimiter::lookaheadSamples`). Per sample:
-
-1. **Detector:** stereo-linked sample peak plus a 4× true-peak estimate (polyphase
-   Blackman-windowed sinc, 4 phases × 12 taps, each phase normalised to unity DC). It runs on
-   the detector path only — the audio is never resampled — and it is referenced to the sample
-   6 ago (the interpolator's own delay), estimating the peaks between that sample and the next.
-2. **Required gain** `ceiling / peak` (1 when under), then its **minimum over the smoothing
-   window plus a 20 ms hold** (monotonic queue, O(1)). The hold means successive half-cycles of
-   a bass note do not let the gain bounce between them — that bounce is what makes a plain fast
-   limiter distort bass. 20 ms covers 25 Hz; it was 10 ms first, which left 0.17% THD at 30 Hz
-   and 1.2% at 20 Hz (now 0.00% and 0.02%), at the cost of ~10 ms slower recovery after a burst.
-3. **Release:** instant down, 60 ms one-pole up.
-4. **Smoothing:** two cascaded moving averages whose combined span is the window
-   (`lookahead − 6 + 1` samples), so the gain glides down in an S-curve.
-5. **Apply** to the audio delayed by the lookahead.
-
-Because every term of the moving average is a minimum taken over a window that contains the
-delayed sample, the applied gain is never above what that sample needs: the ceiling is held by
-the gain alone. The hard clamp is kept as a last resort and counted
-(`SafetyLimiter::getClampCount()`); on the hot-noise-plus-transients test it is **0**. Measured:
-THD on sines pushed +3 / +12 dB is ~10⁻⁶ % from 25 Hz to 5 kHz in both modes; the inter-sample
-test comes out at −0.13 dBFS true peak against a −0.3 ceiling (the 12-tap estimator under-reads
-by ~0.17 dB at fs/4). 1 ms and 2 ms measure the same on these signals; 2 ms ramps the gain down
-over twice the time, which is gentler on dense real transients.
-
-**Switching live** fades out over 2 ms, swaps engines, and fades back in once audio emerges
-from the new delay line (≤ ~6 ms dip, no click — `testLimiterLookaheadSwitching`). Before the
-first block after `prepare()` a mode change applies at once (that is the host restoring the
-saved setting). `reset()` (the "Reset Set" button) clears only the Off engine's envelope and
-the meter, as before — emptying the lookahead delay line mid-song would drop audio.
-
-**Latency reporting / bypass.** `PluginProcessor` reports `latencySamples(mode)` in
-`prepareToPlay`, and re-reports it via `AsyncUpdater` (message thread) when the parameter
-changes. Both bypasses keep that latency: the plugin's own Bypass button (`EngineParameters::bypass`)
-and the host's bypass (`processBlockBypassed`) pass the audio through the lookahead delay
-untouched (`AutoLevelEngine::processBypassed`), so toggling bypass never shifts the audio in
-time. With Off, both are still exact no-ops. Hosts differ in whether they re-compensate a
-latency change during playback; changing the setting between sets is safest.
-
-The reported gain-reduction meter value has an "instant attack, ~16 dB/s release" smoothing
-applied purely for legible metering — it does not affect the audio path.
-
-### 3.9 Visual state (lock-free triple buffer)
-
-`AutoLevelEngine` publishes a full `EngineVisualState` snapshot at the end of every
-`process()` call into one of 3 buffers (`m_visualStates`), never the one currently marked
-"published" (`m_activeVisualIndex`, `memory_order_release`/`_acquire`). Because the writer
-cycles through all 3 buffers in a fixed rotation (index sequence 1→2→0→1→2→0…), the buffer it
-writes to was last published *two full audio blocks ago* — far more headroom than the UI's 60Hz
-`getVisualState()` read (a plain struct copy) could ever need, so there is no meaningful race
-even though nothing here uses a mutex. This scheme replaced an earlier 2-buffer version that
-could race (see `git log`, "removing mutexes on realtime audio path").
-
-`reset()` (called from the UI's "Reset Set" button) does **not** touch DSP state directly —
-it just sets an atomic flag that `process()` consumes and services (via `doReset()`) at the top
-of the *next* audio block, specifically so filter/measurement state is only ever mutated from
-the audio thread.
-
----
-
-## 4. Parameter reference
-
-All parameters are declared in `AutoLevelDJAudioProcessor::createParameterLayout()`
-([`src/PluginProcessor.cpp`](../src/PluginProcessor.cpp)) and are standard
-`AudioProcessorValueTreeState` parameters — automatable and saved/restored with the plugin
-state (`getStateInformation`/`setStateInformation`, XML via `ValueTree`).
-
-| Parameter ID | UI Label | Type | Range | Default | Consumed by |
-|---|---|---|---|---|---|
-| `target_lufs` | Target LUFS | Float | −24 to −4 LUFS (0.5 step) | **−14 LUFS** | `Leveler` target, and (via `- 15.0f`) `MultibandCompressor` base threshold — see §3.5 |
-| `max_boost` | Max Boost | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` upward clamp |
-| `max_cut` | Max Cut | Float | 0 to 18 dB (0.5 step) | 12 dB | `Leveler` downward clamp |
-| `level_response` | Level Response | Float | 0 to 1 (0.01 step) | 0.85 | `LoudnessMeter` histogram decay half-life (§3.2) — **not** the leveler's slew rate |
-| `slew_speed` | Slew Speed | Choice | Slow / Normal / Fast | Normal | `Leveler` steady-state gain slew rate (§3.3) — **not** `mbc_attack` / `mbc_release` below, a different stage entirely. Added 2026-09-11 (§8) |
-| `compression_amount` | Compression | Float | 0 to 1 (0.01 step) | 0.50 | `MultibandCompressor` ratio (1.0–4.0) and enable gate (`>= 0.02`) |
-| `tone_slope` | Tone Slope ("Tone Tilt") | Float | −3.0 to 0.0 dB/oct (0.1 step) | −1.5 dB/oct | `MultibandCompressor` threshold tilt |
-| `target_profile` | Target Profile | Choice | Pink Noise (Linear) / Modern Mix (Contoured) | Modern Mix | `MultibandCompressor` threshold contour. Note: `TargetProfile::CUSTOM` exists in the DSP enum but has no 3rd UI choice — unreachable from the plugin |
-| `mbc_attack` | MBC Attack | Float | 1 to 100 ms (log-skewed, 15 ms at centre of travel) | 15 ms | `MultibandCompressor` attack, bands 1–5 (Sub runs at 2×) — §3.5. Added 2026-10-08, replaces `mbc_speed` |
-| `mbc_release` | MBC Release | Float | 20 to 5000 ms (log-skewed, 200 ms at centre) | 200 ms | `MultibandCompressor` release, bands 1–5 (Sub runs at 2×, max 5000). Added 2026-10-08; max raised from 1000 ms 2026-10-09 |
-| `mbc_release_mode` | Release (Tone Shaper header) | Choice | Manual / Auto | Manual | `MultibandCompressor` single vs program-dependent release — §3.5. Added 2026-10-09 |
-| `mbc_detector` | Detector | Float | 0 (Peak) to 1 (RMS), 0.01 step | 0 = Peak | `MultibandCompressor` level-detector blend — §3.5. Added 2026-10-08 |
-| `eq_sub` … `eq_air` | EQ Sub / Bass / Low-Mid / High-Mid / Presence / Air | Float ×6 | −12 to +12 dB (0.1 step) | 0 dB | `BandEQ` band gains — §3.5.2. Added 2026-10-08 |
-| `eq_position` | EQ Position | Choice | Before MBC / After MBC | After MBC | Where `BandEQ` sits relative to the MBC. Added 2026-10-08 |
-| `post_mbc_gain` | Post Gain | Float | −12 to +12 dB (0.1 step) | 0 dB | Post-MBC manual trim |
-| `hpf_freq` | Low Cut | Float | 20 to 50 Hz (0.5 step) | 30 Hz | `HighPassFilter` cutoff (always enabled, see §3.7) |
-| `limiter_lookahead` | Lookahead (header) | Choice | Off / 1 ms / 2 ms | Off | `SafetyLimiter` engine and the plugin's latency (0 / 1 / 2 ms) — §3.8. Added 2026-10-08 |
-| `ceiling_db` | Limiter Ceiling ("Amp Ceiling") | Float | −3.0 to 0.0 dBFS (0.1 step) | −0.3 dBFS | `SafetyLimiter` ceiling |
-| `freeze_breakdowns` | Freeze Breakdowns | Bool | On/Off | On | `Leveler` breakdown-freeze enable (threshold itself is hardcoded at 7 LU, see §5) |
-| `bypass` | Bypass | Bool | On/Off | Off | Whole-engine bypass (`AutoLevelEngine::process` early-returns, leaving audio untouched) |
-
----
-
-### 3.3.1 Seed gain (`Leveler::seedGain`, `AutoLevelEngine::seedGain`)
-
-Added 2026-09-18. Preloads the leveller's gain from an **external** estimate of how loud the
-source is, so the correction starts at the right value instead of slewing to it over the first
-several seconds of a track.
-
-The plugin does not call this — a DJ mixer's master bus has no metadata to seed from. It exists
-for hosts that know a track's loudness *before* playing it: the AutoLevel Android player uses a
-Subsonic `replayGain.trackGain` tag, converting it with `trackLufs = -18.0 - trackGain`
-(ReplayGain 2.0 references −18 LUFS) and seeding `targetLUFS - trackLufs`.
-
-Behaviour:
-
-- Sets current gain, target gain **and** the smoothed linear gain, so there is no ramp from
-  unity. That is why it must only be called at a boundary with no audio flowing; mid-stream it
-  would be an audible step. `AutoLevelEngine::seedGain` defers it to the audio thread for the
-  same reason `reset()` is deferred, and applies it *after* a pending reset so a seed requested
-  alongside one survives.
-- Leaves the fast-lock timer at zero. Nothing has been measured yet, so the leveller should
-  still be free to move quickly once it has been.
-- Clamped to ±24 dB (`Leveler::SEED_LIMIT_DB`), independent of Max Boost / Max Cut. Those are
-  parameters and are applied by `update()` once a measurement exists; the hard bound only stops
-  a nonsensical tag blasting the output before then.
-- **Is not authoritative.** The next `update()` recomputes the target from what is actually
-  heard, so a wrong seed costs a brief settle rather than being trusted for the whole track.
-  There is a test feeding a loud signal after a +12 dB seed and asserting the gain ends up
-  negative.
-
-## 5. Things that exist in the DSP layer but aren't exposed as parameters
-
-These are implemented and unit-tested in `src/dsp/`, but `PluginProcessor.cpp` never sets them
-from any `AudioProcessorValueTreeState` parameter, so they always run at their hardcoded
-`EngineParameters` struct default:
-
-- **`breakdownThresholdLU`** (default `7.0f` LU) — the sensitivity of breakdown-freeze
-  detection. `Leveler` supports a configurable threshold (tested with 5/7/9 LU sensitivity in
-  `testBreakdownFreezeSensitivity`) but the plugin only exposes a plain On/Off toggle, always
-  using 7 LU ("Normal" sensitivity) when on.
-- **`TargetProfile::CUSTOM`** and its `customOffsetsDb` array — implemented and tested
-  (`testCustomToneProfile`), but the "Target Profile" combo box only offers 2 choices, so this
-  path is dead code from the plugin's actual entry point today.
-
-If any of these get exposed as real parameters in the future, add them to §4's table and remove
-them from this list.
-
----
-
-## 6. Build & test
+## 7. Build & test
 
 ```bash
-# DSP-only correctness suite (no JUCE needed, seconds to build/run):
-clang++ -std=c++20 -O0 -g -Isrc -UNDEBUG -o dsp_test tests/dsp_test.cpp
-./dsp_test
-
-# Full plugin build (fetches JUCE 8.0.6 via CMake FetchContent — first run is slow):
+git submodule update --init --recursive          # if cloned without --recursive
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-./build/dsp_test                     # same tests, built via CMake this time
-cmake --build build --target install_plugins   # installs VST3+AU to ~/Library/Audio/Plug-Ins
+cmake --build build
+./build/dsp_test      # autolevel-core's engine tests
+./build/plugin_test   # parity, mapping, presets, state
 ```
 
-CI (`.github/workflows/build-and-release.yml`) builds macOS (Universal VST3/AU/Standalone) and
-Windows x64/x86 (VST3/Standalone) on every version tag push or manual dispatch, runs `dsp_test`
-on each platform, and publishes a GitHub Release with zipped artifacts per platform.
+CI (`.github/workflows/build-and-release.yml`) checks out the submodule and runs both. Because
+autolevel-core is private, the workflow needs a `CORE_REPO_TOKEN` secret: a fine-grained token
+with read access to `divid3byzer0/autolevel-core`.
 
-The test suite (`tests/dsp_test.cpp`, 29 tests) exercises `AutoLevelEngine` and every DSP
-submodule directly — K-weighting calibration, tone-profile thresholds, LR4 crossover flatness,
-EBU R128 loudness accuracy across levels, MBC attack/release (including a regression test that
-`prepare()` doesn't leave stale cached ballistics), the 5000 ms release range and auto release,
-and the Peak/RMS detector, the Band EQ
-(bit-exact flat, per-band accuracy, smoothing, pre/post routing), the lookahead limiter
-(exact latency, THD, ceiling, true peak, live switching, bypass latency), breakdown-freeze
-sensitivity, NaN/Inf sanitization, and the lock-free visual-state buffer. It does **not**
-exercise `PluginProcessor`/`PluginEditor` (those need a full JUCE build and a host/GUI
-environment) — as of 2026-09-11 a full CMake+JUCE build was verified to compile cleanly with
-zero warnings in project code, but no live-host or GUI interaction testing has been done.
-
----
-
-## 7. Known unreachable/dead code (intentionally left in place)
-
-- `TargetProfile::CUSTOM` (§5) — UI can't select it.
-- `LoudnessMeter::m_blockSamples`, `m_gatedMs` — computed/incremented, never read.
-- Several struct-level defaults that are always overwritten by a caller before use, kept only
-  so directly-constructed instances (e.g. in tests) have a sane value:
-  `LevelerParams::targetLUFS`, `MBCParams::toneSlopeDbPerOctave`,
-  `MBCParams::baseThresholdDb` (defaults to `Bands::MBC_THRESHOLD_DB`). **If you ever change a
-  "live" default (the one in `EngineParameters` or the APVTS parameter), check whether these
-  dead struct defaults should track it too** — see §8, this is exactly the kind of drift that
-  caused the Target LUFS documentation to go stale.
+Engine changes are made in autolevel-core, then picked up here by moving the submodule
+(`cd external/autolevel-core && git pull`, commit the new pointer) — the same in autolevel-box.
 
 ---
 
 ## 8. Changelog
+
+### 2026-11-06 — v3.0.0: the autolevel-box engine, settings and presets
+
+The plugin's own DSP (copied from the box in September and drifted since) is replaced by
+autolevel-core, the engine the box now also builds. See §2-§6 for the design; in short:
+
+- Sound is the box's: MBC up to 5:1 with thresholds 18 dB under Target LUFS, the box's RMS
+  window and auto release, Air Lift, the pre-MBC bell EQ, the 8× true-peak limiter, flat
+  tone slope by default. Verified bit for bit against the box engine.
+- 256-frame block collection for identical Leveler behaviour; latency 358 frames at 48 kHz.
+- Parameters mirror the box's (§3); presets are box JSON (§4); v2 sessions load (§5).
+- Removed with the old DSP: Target Profile, EQ Position, Limiter Lookahead, the zero-latency
+  SafetyLimiter, BandEQ shelves, `seedGain`, configurable max ratio.
+
+### Before v3
+
+The entries below describe the plugin's own DSP, which v3 replaced. Kept as history; file and
+class names in them refer to code that no longer exists here.
+
 
 ### 2026-10-09 — MBC auto release; release range up to 5000 ms
 
