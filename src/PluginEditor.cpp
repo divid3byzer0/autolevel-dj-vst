@@ -248,12 +248,12 @@ void ModernHardwareLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButt
 // ToneCurveVisualizer Implementation
 //==============================================================================
 
-void ToneCurveVisualizer::updateCurve(autolevel::dsp::TargetProfile profile, float toneSlopeDb,
-                                     const std::array<float, autolevel::dsp::Bands::COUNT>& thresholds)
+void ToneCurveVisualizer::updateCurve(float toneSlopeDb,
+                                      const std::array<float, autolevel::dsp::Bands::COUNT>& contourDb)
 {
-    m_profile = profile;
+    if (toneSlopeDb == m_toneSlope && contourDb == m_contour) return;
     m_toneSlope = toneSlopeDb;
-    m_thresholds = thresholds;
+    m_contour = contourDb;
     repaint();
 }
 
@@ -316,11 +316,9 @@ void ToneCurveVisualizer::paint(juce::Graphics& g)
     juce::Path fillPath;
     constexpr int NUM_STEPS = 64;
 
-    const float* contour = (m_profile == autolevel::dsp::TargetProfile::MODERN_MIX)
-        ? autolevel::dsp::Bands::MODERN_CONTOUR_DB.data() : nullptr;
+    const float* contour = m_contour.data();
 
     auto getContourOffset = [contour](float oct) -> float {
-        if (!contour) return 0.0f;
         // Smooth gaussian-weighted interpolation between the 6 band center octaves
         float sumW = 0.0f;
         float sumVal = 0.0f;
@@ -365,8 +363,7 @@ void ToneCurveVisualizer::paint(juce::Graphics& g)
     }
 
     // Semi-transparent gradient fill
-    juce::Colour accentCol = (m_profile == autolevel::dsp::TargetProfile::MODERN_MIX)
-        ? juce::Colour(0xff00e5ff) : juce::Colour(0xffffb300);
+    const juce::Colour accentCol(0xff00e5ff);
 
     juce::ColourGradient fillGrad(accentCol.withAlpha(0.20f), plotX + plotW * 0.5f, plotY,
                                  accentCol.withAlpha(0.01f), plotX + plotW * 0.5f, midY, false);
@@ -391,9 +388,9 @@ MultibandMeterRack::MultibandMeterRack() {
 }
 
 void MultibandMeterRack::updateMeters(const std::array<float, autolevel::dsp::Bands::COUNT>& gainReductions,
-                                      autolevel::dsp::TargetProfile profile)
+                                      const std::array<float, autolevel::dsp::Bands::COUNT>& contourDb)
 {
-    m_profile = profile;
+    m_contour = contourDb;
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float gr = gainReductions[b]; // Negative dB (0 to -12)
         m_currentGr[b] = gr;
@@ -421,7 +418,6 @@ void MultibandMeterRack::paint(juce::Graphics& g)
     g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
 
     const auto& bandNames = autolevel::dsp::Bands::NAMES;
-    const auto& contours = autolevel::dsp::Bands::MODERN_CONTOUR_DB;
 
     int numBands = static_cast<int>(autolevel::dsp::Bands::COUNT);
     float scaleW = SCALE_W;
@@ -504,9 +500,8 @@ void MultibandMeterRack::paint(juce::Graphics& g)
         juce::String grText = (gr < -0.05f) ? (juce::String(gr, 1) + "dB") : "0.0dB";
         g.drawText(grText, static_cast<int>(bx), static_cast<int>(meterTopY + meterH + 4), static_cast<int>(meterColW), 14, juce::Justification::centred);
 
-        // Contour offset badge
-        float offset = (m_profile == autolevel::dsp::TargetProfile::MODERN_MIX)
-            ? contours[static_cast<size_t>(b)] : 0.0f;
+        // Contour offset badge (the band's MBC threshold offset, custom_band_N)
+        float offset = m_contour[static_cast<size_t>(b)];
 
         juce::String offsetStr = (offset > 0.0f) ? ("+" + juce::String(offset, 1)) : juce::String(offset, 1);
         juce::Colour offsetCol = (offset < 0.0f) ? juce::Colour(0xffffb300) : (offset > 0.0f ? juce::Colour(0xff00e5ff) : juce::Colour(0xff556070));
@@ -538,7 +533,7 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
 
     // Row 1: Primary Knobs
     setupRotary(m_targetLufsSlider, m_targetLufsLabel, "TARGET LUFS", " LUFS", juce::Colour(0xff00e676));
-    setupRotary(m_compressionSlider, m_compressionLabel, "COMPRESSION", "x", juce::Colour(0xff00e5ff));
+    setupRotary(m_compressionSlider, m_compressionLabel, "COMPRESSION", "", juce::Colour(0xff00e5ff));
     setupRotary(m_levelResponseSlider, m_levelResponseLabel, "LEVEL RESPONSE", "", juce::Colour(0xff00e5ff));
     setupRotary(m_toneSlopeSlider, m_toneSlopeLabel, "TONE SLOPE", " dB/oct", juce::Colour(0xffffb300));
     setupRotary(m_ceilingSlider, m_ceilingLabel, "LIMITER CEILING", " dBFS", juce::Colour(0xffff3366));
@@ -549,8 +544,8 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     // Row 2: Secondary Knobs
     setupRotary(m_maxBoostSlider, m_maxBoostLabel, "MAX BOOST", " dB", juce::Colour(0xff00e5ff));
     setupRotary(m_maxCutSlider, m_maxCutLabel, "MAX CUT", " dB", juce::Colour(0xffffb300));
-    setupRotary(m_postGainSlider, m_postGainLabel, "POST GAIN", " dB", juce::Colour(0xff00e5ff));
-    setupRotary(m_hpfSlider, m_hpfLabel, "LOW CUT", " Hz", juce::Colour(0xffffb300));
+    setupRotary(m_postGainSlider, m_postGainLabel, "POST GAIN", "", juce::Colour(0xff00e5ff));
+    setupRotary(m_hpfSlider, m_hpfLabel, "LOW CUT", "", juce::Colour(0xffffb300));
 
     // AGC Slew Speed Controls (Segmented header buttons, Card 2 - AGC Gain Correction)
     m_slewSpeedBox.addItem("Slow", 1);
@@ -577,7 +572,10 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupSlewSpeedBtn(m_slewFastBtn, 2);
 
     // Breakdown freeze (located in Card 2 - AGC Gain Correction)
-    m_freezeBreakdownsButton.setButtonText("Breakdown Freeze");
+    m_freezeBreakdownsButton.setButtonText("Freeze");
+    m_freezeBreakdownsButton.setTooltip("Breakdown freeze: hold the gain during quiet breakdowns instead of "
+                                        "boosting them; the buttons set how far below the integrated level "
+                                        "counts as a breakdown.");
     m_freezeBreakdownsButton.setColour(juce::ToggleButton::textColourId, juce::Colour(0xffffb300));
     m_content.addAndMakeVisible(m_freezeBreakdownsButton);
 
@@ -592,77 +590,74 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_resetButton.onClick = [this]() { m_processor.resetIntegration(); };
     m_content.addAndMakeVisible(m_resetButton);
 
-    // Limiter lookahead (header): Off = original zero-latency limiter, 1/2 ms = clean lookahead limiting
-    m_lookaheadBox.addItem("Off", 1);
-    m_lookaheadBox.addItem("1 ms", 2);
-    m_lookaheadBox.addItem("2 ms", 3);
-    m_content.addChildComponent(m_lookaheadBox);
+    // Presets (header): box-format JSON files
+    m_presetsButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff181d26));
+    m_presetsButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xff00e676));
+    m_presetsButton.setTooltip("Load or save presets in the autolevel-box format - "
+                               "the same files the box saves, usable on either.");
+    m_presetsButton.onClick = [this]() { showPresetsMenu(); };
+    m_content.addAndMakeVisible(m_presetsButton);
 
-    m_lookaheadLabel.setText("LOOKAHEAD:", juce::dontSendNotification);
-    m_lookaheadLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    m_lookaheadLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
-    m_lookaheadLabel.setJustificationType(juce::Justification::centredRight);
-    m_lookaheadLabel.setTooltip("Safety limiter lookahead. 1 or 2 ms stops the limiter distorting when pushed, "
-                                "at that much added latency. Off = zero latency.");
-    m_content.addAndMakeVisible(m_lookaheadLabel);
+    // Dynamic Air Lift (Tonal Target card): hidden APVTS-bound ComboBox + segmented buttons
+    for (const char* item : { "Off", "Low", "Med", "High" })
+        m_airLiftBox.addItem(item, m_airLiftBox.getNumItems() + 1);
+    m_content.addChildComponent(m_airLiftBox);
 
-    auto setupLookaheadBtn = [this](juce::TextButton& btn, int index) {
+    m_airLiftLabel.setText("AIR LIFT:", juce::dontSendNotification);
+    m_airLiftLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_airLiftLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_airLiftLabel.setJustificationType(juce::Justification::centredRight);
+    m_airLiftLabel.setTooltip("Dynamic Air Lift: a distortion-free high shelf that lifts the top end "
+                              "of dull material (up to +6.5 dB) and backs off on bright material.");
+    m_content.addAndMakeVisible(m_airLiftLabel);
+    for (int i = 0; i < 4; ++i) {
+        auto& btn = m_airLiftBtns[static_cast<size_t>(i)];
         btn.setClickingTogglesState(false);
-        btn.onClick = [this, index]() {
-            m_lookaheadBox.setSelectedItemIndex(index, juce::sendNotificationSync);
-        };
+        btn.onClick = [this, i]() { m_airLiftBox.setSelectedItemIndex(i, juce::sendNotificationSync); };
         m_content.addAndMakeVisible(btn);
-    };
-    setupLookaheadBtn(m_lookaheadOffBtn, 0);
-    setupLookaheadBtn(m_lookahead1Btn, 1);
-    setupLookaheadBtn(m_lookahead2Btn, 2);
+    }
+    m_airLiftReadout.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_airLiftReadout.setJustificationType(juce::Justification::centred);
+    m_airLiftReadout.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_content.addAndMakeVisible(m_airLiftReadout);
 
-    // Hidden APVTS-bound ComboBox for Profile
-    m_profileBox.addItem("Pink Noise (Linear)", 1);
-    m_profileBox.addItem("Modern Mix (Contoured)", 2);
-    m_content.addChildComponent(m_profileBox);
+    // Breakdown sensitivity (AGC card), next to the freeze toggle
+    {
+        const float values[3] = { 5.0f, 7.0f, 9.0f };
+        const char* tips[3] = { "Sensitive: freeze when 5 LU below the integrated level",
+                                "Normal: freeze when 7 LU below the integrated level",
+                                "Deep: freeze only when 9 LU below the integrated level" };
+        for (size_t i = 0; i < 3; ++i) {
+            auto& btn = m_breakdownBtns[i];
+            btn.setClickingTogglesState(false);
+            btn.setTooltip(tips[i]);
+            const float v = values[i];
+            btn.onClick = [this, v]() {
+                if (auto* prm = m_processor.getAPVTS().getParameter(
+                        AutoLevelDJAudioProcessor::hostParamId(AutoLevelDJAudioProcessor::Param::BREAKDOWN_THRESHOLD_LU))) {
+                    prm->beginChangeGesture();
+                    prm->setValueNotifyingHost(prm->convertTo0to1(v));
+                    prm->endChangeGesture();
+                }
+            };
+            m_content.addAndMakeVisible(btn);
+        }
+    }
 
-    // Tactile Profile Segmented Buttons
-    m_pinkNoiseBtn.setButtonText("PINK NOISE");
-    m_pinkNoiseBtn.setClickingTogglesState(false);
-    m_pinkNoiseBtn.onClick = [this]() {
-        m_profileBox.setSelectedItemIndex(0, juce::sendNotificationSync);
-    };
-    m_content.addAndMakeVisible(m_pinkNoiseBtn);
-
-    m_modernMixBtn.setButtonText("MODERN MIX");
-    m_modernMixBtn.setClickingTogglesState(false);
-    m_modernMixBtn.onClick = [this]() {
-        m_profileBox.setSelectedItemIndex(1, juce::sendNotificationSync);
-    };
-    m_content.addAndMakeVisible(m_modernMixBtn);
-
-    m_profileDescLabel.setText("Club Contour: -2.5dB @ 250Hz | -2.0dB @ 5kHz", juce::dontSendNotification);
-    m_profileDescLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    m_profileDescLabel.setJustificationType(juce::Justification::centred);
-    m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
-    m_content.addAndMakeVisible(m_profileDescLabel);
-
-    // Band EQ: Before/After-MBC switch in the Tone Shaper header (hidden APVTS-bound ComboBox + two buttons)
-    m_eqPositionBox.addItem("Before MBC", 1);
-    m_eqPositionBox.addItem("After MBC", 2);
-    m_content.addChildComponent(m_eqPositionBox);
-
-    m_eqPositionLabel.setText("EQ:", juce::dontSendNotification);
-    m_eqPositionLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    m_eqPositionLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
-    m_eqPositionLabel.setJustificationType(juce::Justification::centredRight);
-    m_content.addAndMakeVisible(m_eqPositionLabel);
-
-    auto setupEqPosBtn = [this](juce::TextButton& btn, int index) {
-        btn.setClickingTogglesState(false);
-        btn.onClick = [this, index]() {
-            m_eqPositionBox.setSelectedItemIndex(index, juce::sendNotificationSync);
-        };
-        m_content.addAndMakeVisible(btn);
-    };
-    setupEqPosBtn(m_eqBeforeBtn, 0);
-    setupEqPosBtn(m_eqAfterBtn, 1);
+    // Band fader mode (Tone Shaper header): what the six faders edit
+    m_faderModeLabel.setText("FADERS:", juce::dontSendNotification);
+    m_faderModeLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+    m_faderModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
+    m_faderModeLabel.setJustificationType(juce::Justification::centredRight);
+    m_faderModeLabel.setTooltip("CONTOUR: per-band MBC threshold offsets (the box's tone-shaper curve). "
+                                "PRE-EQ: the 6-band EQ ahead of the compressor.");
+    m_content.addAndMakeVisible(m_faderModeLabel);
+    m_faderContourBtn.setClickingTogglesState(false);
+    m_faderContourBtn.onClick = [this]() { setFaderMode(false); };
+    m_content.addAndMakeVisible(m_faderContourBtn);
+    m_faderEqBtn.setClickingTogglesState(false);
+    m_faderEqBtn.onClick = [this]() { setFaderMode(true); };
+    m_content.addAndMakeVisible(m_faderEqBtn);
 
     // MBC release mode (Tone Shaper header): Manual / Auto
     m_releaseModeBox.addItem("Manual", 1);
@@ -673,8 +668,9 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     m_releaseModeLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
     m_releaseModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xff8b95a5));
     m_releaseModeLabel.setJustificationType(juce::Justification::centredRight);
-    m_releaseModeLabel.setTooltip("Auto: short hits recover at the MBC Release time, sustained "
-                                  "compression up to 10x slower (max 5000 ms), so dense passages don't pump.");
+    m_releaseModeLabel.setTooltip("Auto: a second, slow detector (10x attack, 5x release) runs alongside, so "
+                                  "short hits recover at the MBC Release time but dense passages hold "
+                                  "their reduction instead of pumping.");
     m_content.addAndMakeVisible(m_releaseModeLabel);
 
     auto setupReleaseModeBtn = [this](juce::TextButton& btn, int index) {
@@ -687,60 +683,49 @@ AutoLevelDJAudioProcessorEditor::AutoLevelDJAudioProcessorEditor(AutoLevelDJAudi
     setupReleaseModeBtn(m_releaseManualBtn, 0);
     setupReleaseModeBtn(m_releaseAutoBtn, 1);
 
-    // Band EQ faders, one beside each band's GR meter (added after the rack so they sit on top)
-    for (auto& sl : m_eqSliders) {
+    // Band faders, one beside each band's GR meter (added after the rack so they sit on top)
+    for (auto& sl : m_bandSliders) {
         sl.setSliderStyle(juce::Slider::LinearVertical);
         sl.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
-        sl.setColour(juce::Slider::trackColourId, juce::Colour(0xff00e5ff));
-        sl.setTooltip("Band EQ gain (double-click to reset)");
         m_content.addAndMakeVisible(sl);
     }
 
     // APVTS Attachments
+    using P = AutoLevelDJAudioProcessor::Param;
     auto& apvts = m_processor.getAPVTS();
-    m_targetLufsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_TARGET_LUFS, m_targetLufsSlider);
-    m_compressionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_COMPRESSION_AMOUNT, m_compressionSlider);
-    m_levelResponseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_LEVEL_RESPONSE, m_levelResponseSlider);
-    m_slewSpeedAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_SLEW_SPEED, m_slewSpeedBox);
-    m_toneSlopeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_TONE_SLOPE, m_toneSlopeSlider);
-    m_profileAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_TARGET_PROFILE, m_profileBox);
-    m_detectorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MBC_DETECTOR, m_detectorSlider);
-    m_attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MBC_ATTACK, m_attackSlider);
-    m_releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MBC_RELEASE, m_releaseSlider);
-    m_eqPositionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_EQ_POSITION, m_eqPositionBox);
-    m_releaseModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MBC_RELEASE_MODE, m_releaseModeBox);
-    m_lookaheadAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_LIMITER_LOOKAHEAD, m_lookaheadBox);
-    for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
-        m_eqAttachments[b] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-            apvts, AutoLevelDJAudioProcessor::ID_EQ_BANDS[b], m_eqSliders[b]);
-        m_eqSliders[b].setDoubleClickReturnValue(true, 0.0);
-    }
-    m_maxBoostAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MAX_BOOST, m_maxBoostSlider);
-    m_maxCutAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_MAX_CUT, m_maxCutSlider);
-    m_postGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_POST_MBC_GAIN, m_postGainSlider);
-    m_hpfAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_HPF_FREQ, m_hpfSlider);
-    m_ceilingAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_CEILING_DB, m_ceilingSlider);
-    m_freezeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_FREEZE_BREAKDOWNS, m_freezeBreakdownsButton);
-    m_bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        apvts, AutoLevelDJAudioProcessor::ID_BYPASS, m_bypassButton);
+    auto attachSlider = [&apvts](std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>& a,
+                                 P which, juce::Slider& sl) {
+        a = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            apvts, AutoLevelDJAudioProcessor::hostParamId(which), sl);
+    };
+    auto attachBox = [&apvts](std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& a,
+                              P which, juce::ComboBox& box) {
+        a = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+            apvts, AutoLevelDJAudioProcessor::hostParamId(which), box);
+    };
+    auto attachButton = [&apvts](std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>& a,
+                                 P which, juce::Button& b) {
+        a = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            apvts, AutoLevelDJAudioProcessor::hostParamId(which), b);
+    };
+    attachSlider(m_targetLufsAttachment, P::TARGET_LUFS, m_targetLufsSlider);
+    attachSlider(m_compressionAttachment, P::COMPRESSION_AMOUNT, m_compressionSlider);
+    attachSlider(m_levelResponseAttachment, P::LEVEL_RESPONSE, m_levelResponseSlider);
+    attachBox(m_slewSpeedAttachment, P::SLEW_SPEED, m_slewSpeedBox);
+    attachSlider(m_toneSlopeAttachment, P::TONE_SLOPE, m_toneSlopeSlider);
+    attachSlider(m_detectorAttachment, P::MBC_DETECTOR_RMS, m_detectorSlider);
+    attachSlider(m_attackAttachment, P::MBC_ATTACK_MS, m_attackSlider);
+    attachSlider(m_releaseAttachment, P::MBC_RELEASE_MS, m_releaseSlider);
+    attachBox(m_releaseModeAttachment, P::MBC_AUTO_RELEASE, m_releaseModeBox);
+    attachBox(m_airLiftAttachment, P::AIR_EXCITER, m_airLiftBox);
+    attachSlider(m_maxBoostAttachment, P::MAX_BOOST, m_maxBoostSlider);
+    attachSlider(m_maxCutAttachment, P::MAX_CUT, m_maxCutSlider);
+    attachSlider(m_postGainAttachment, P::POST_MBC_GAIN, m_postGainSlider);
+    attachSlider(m_hpfAttachment, P::HPF_FREQ, m_hpfSlider);
+    attachSlider(m_ceilingAttachment, P::CEILING_DB, m_ceilingSlider);
+    attachButton(m_freezeAttachment, P::FREEZE_BREAKDOWNS, m_freezeBreakdownsButton);
+    attachButton(m_bypassAttachment, P::BYPASS, m_bypassButton);
+    setFaderMode(false);
 
     startTimerHz(60);
 }
@@ -771,35 +756,37 @@ void AutoLevelDJAudioProcessorEditor::setupRotary(juce::Slider& slider, juce::La
 void AutoLevelDJAudioProcessorEditor::timerCallback() {
     m_latestState = m_processor.getVisualState();
 
-    // Sync profile segmented buttons
-    int curIdx = m_profileBox.getSelectedItemIndex();
-    bool isPink = (curIdx == 0);
-    m_pinkNoiseBtn.setToggleState(isPink, juce::dontSendNotification);
-    m_modernMixBtn.setToggleState(!isPink, juce::dontSendNotification);
-
-    if (isPink) {
-        m_profileDescLabel.setText("Linear 1/f: Flat octave energy balance", juce::dontSendNotification);
-        m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xffffb300));
+    // Sync Air Lift segmented buttons and readout
+    const int airIdx = m_airLiftBox.getSelectedItemIndex();
+    for (int i = 0; i < 4; ++i)
+        m_airLiftBtns[static_cast<size_t>(i)].setToggleState(airIdx == i, juce::dontSendNotification);
+    if (airIdx <= 0) {
+        m_airLiftReadout.setText("Air Lift off", juce::dontSendNotification);
+        m_airLiftReadout.setColour(juce::Label::textColourId, juce::Colour(0xff556070));
     } else {
-        m_profileDescLabel.setText("Club Contour: -2.5dB @ 250Hz | -2.0dB @ 5kHz", juce::dontSendNotification);
-        m_profileDescLabel.setColour(juce::Label::textColourId, juce::Colour(0xff00e5ff));
+        m_airLiftReadout.setText("Air Lift: +" + juce::String(m_latestState.airLiftDb, 1) + " dB above 6.5 kHz",
+                                 juce::dontSendNotification);
+        m_airLiftReadout.setColour(juce::Label::textColourId, juce::Colour(0xff00e5ff));
     }
 
-    // Sync limiter lookahead segmented buttons
-    int lookaheadIdx = m_lookaheadBox.getSelectedItemIndex();
-    m_lookaheadOffBtn.setToggleState(lookaheadIdx == 0, juce::dontSendNotification);
-    m_lookahead1Btn.setToggleState(lookaheadIdx == 1, juce::dontSendNotification);
-    m_lookahead2Btn.setToggleState(lookaheadIdx == 2, juce::dontSendNotification);
+    // Sync breakdown sensitivity buttons (dim when freeze is off, as the box does)
+    const float thr = m_processor.getAPVTS().getRawParameterValue(
+        AutoLevelDJAudioProcessor::hostParamId(AutoLevelDJAudioProcessor::Param::BREAKDOWN_THRESHOLD_LU))->load();
+    const bool freezeOn = m_freezeBreakdownsButton.getToggleState();
+    const float thrValues[3] = { 5.0f, 7.0f, 9.0f };
+    for (size_t i = 0; i < 3; ++i) {
+        m_breakdownBtns[i].setToggleState(std::abs(thr - thrValues[i]) < 0.25f, juce::dontSendNotification);
+        m_breakdownBtns[i].setEnabled(freezeOn);
+    }
 
     // Sync MBC release mode segmented buttons
     int releaseModeIdx = m_releaseModeBox.getSelectedItemIndex();
     m_releaseManualBtn.setToggleState(releaseModeIdx == 0, juce::dontSendNotification);
     m_releaseAutoBtn.setToggleState(releaseModeIdx == 1, juce::dontSendNotification);
 
-    // Sync EQ position segmented buttons
-    int eqPosIdx = m_eqPositionBox.getSelectedItemIndex();
-    m_eqBeforeBtn.setToggleState(eqPosIdx == 0, juce::dontSendNotification);
-    m_eqAfterBtn.setToggleState(eqPosIdx == 1, juce::dontSendNotification);
+    // Sync fader mode buttons
+    m_faderContourBtn.setToggleState(!m_fadersEditEq, juce::dontSendNotification);
+    m_faderEqBtn.setToggleState(m_fadersEditEq, juce::dontSendNotification);
 
     // Sync AGC Slew Speed segmented buttons
     int slewIdx = m_slewSpeedBox.getSelectedItemIndex();
@@ -813,11 +800,92 @@ void AutoLevelDJAudioProcessorEditor::timerCallback() {
         m_maxHeldLimiterGrDb = curLimGr;
     }
 
-    // Update Visualizers
-    m_toneVisualizer.updateCurve(m_latestState.activeProfile, m_latestState.activeToneSlope, m_latestState.mbcThresholdsDb);
-    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, m_latestState.activeProfile);
+    // Update Visualizers. Read the contour from the parameters rather than the engine, so the
+    // curve follows a fader immediately even while the host is not processing audio.
+    std::array<float, autolevel::dsp::Bands::COUNT> contour{};
+    for (size_t b = 0; b < contour.size(); ++b) {
+        const auto p = static_cast<AutoLevelDJAudioProcessor::Param>(
+            static_cast<int>(AutoLevelDJAudioProcessor::Param::CUSTOM_BAND_0) + static_cast<int>(b));
+        contour[b] = m_processor.getAPVTS().getRawParameterValue(AutoLevelDJAudioProcessor::hostParamId(p))->load();
+    }
+    m_toneVisualizer.updateCurve(static_cast<float>(m_toneSlopeSlider.getValue()), contour);
+    m_meterRack.updateMeters(m_latestState.mbcGainReductionsDb, contour);
 
     m_content.repaint();
+}
+
+void AutoLevelDJAudioProcessorEditor::setFaderMode(bool editEq) {
+    using P = AutoLevelDJAudioProcessor::Param;
+    m_fadersEditEq = editEq;
+    const auto first = editEq ? P::PRE_EQ_BAND_0 : P::CUSTOM_BAND_0;
+    const juce::Colour col = editEq ? juce::Colour(0xff00e676) : juce::Colour(0xff00e5ff);
+    for (size_t b = 0; b < m_bandSliders.size(); ++b) {
+        auto& sl = m_bandSliders[b];
+        m_bandAttachments[b].reset(); // detach before re-attaching to the other parameter
+        const auto p = static_cast<P>(static_cast<int>(first) + static_cast<int>(b));
+        m_bandAttachments[b] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            m_processor.getAPVTS(), AutoLevelDJAudioProcessor::hostParamId(p), sl);
+        sl.setDoubleClickReturnValue(true, 0.0);
+        sl.setColour(juce::Slider::trackColourId, col);
+        sl.setTooltip(editEq ? "Pre-MBC EQ gain for this band (double-click to reset)"
+                             : "MBC contour: raises (+) or lowers (-) this band's compression threshold "
+                               "(double-click to reset)");
+    }
+}
+
+juce::File AutoLevelDJAudioProcessorEditor::presetsFolder() {
+    return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+        .getChildFile("AutoLevel").getChildFile("Presets");
+}
+
+void AutoLevelDJAudioProcessorEditor::showPresetsMenu() {
+    juce::PopupMenu menu;
+    menu.addSectionHeader("Box-format presets (.json)");
+    menu.addItem(1, "Load preset...");
+    menu.addItem(2, "Save preset as...");
+    menu.addSeparator();
+    menu.addItem(3, "Reset to Default");
+
+    juce::Component::SafePointer<AutoLevelDJAudioProcessorEditor> safe(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&m_presetsButton), [safe](int result) {
+        if (safe == nullptr || result == 0) return;
+        auto& self = *safe;
+        auto folder = presetsFolder();
+        folder.createDirectory();
+
+        if (result == 3) {
+            self.m_processor.resetToDefaults();
+            return;
+        }
+        if (result == 1) {
+            self.m_fileChooser = std::make_unique<juce::FileChooser>("Load AutoLevel preset", folder, "*.json");
+            self.m_fileChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [safe](const juce::FileChooser& fc) {
+                    if (safe == nullptr) return;
+                    auto file = fc.getResult();
+                    if (file.existsAsFile())
+                        safe->m_processor.loadPresetJson(file.loadFileAsString().toStdString());
+                });
+            return;
+        }
+        if (result == 2) {
+            self.m_fileChooser = std::make_unique<juce::FileChooser>("Save AutoLevel preset",
+                                                                     folder.getChildFile("My Preset.json"), "*.json");
+            self.m_fileChooser->launchAsync(juce::FileBrowserComponent::saveMode
+                                                | juce::FileBrowserComponent::canSelectFiles
+                                                | juce::FileBrowserComponent::warnAboutOverwriting,
+                [safe](const juce::FileChooser& fc) {
+                    if (safe == nullptr) return;
+                    auto file = fc.getResult();
+                    if (file == juce::File()) return;
+                    file = file.withFileExtension("json");
+                    if (!file.replaceWithText(juce::String(safe->m_processor.getPresetJson())))
+                        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                                               "Preset not saved",
+                                                               "Could not write " + file.getFullPathName());
+                });
+        }
+    });
 }
 
 void AutoLevelDJAudioProcessorEditor::paint(juce::Graphics& g) {
@@ -1174,22 +1242,22 @@ void AutoLevelDJAudioProcessorEditor::layoutContent() {
     m_bypassButton.setBounds(840 - 116, 13, 96, 28);
     m_resetButton.setBounds(840 - 326, 13, 200, 28);
 
-    // Limiter lookahead switch, left of the reset button (x = 300 to 506)
-    m_lookaheadLabel.setBounds(300, 17, 70, 20);
-    m_lookaheadOffBtn.setBounds(372, 17, 40, 20);
-    m_lookahead1Btn.setBounds(415, 17, 44, 20);
-    m_lookahead2Btn.setBounds(462, 17, 44, 20);
+    // Presets, left of the reset button
+    m_presetsButton.setBounds(840 - 432, 13, 96, 28);
 
-    // Profile Card Controls
-    m_pinkNoiseBtn.setBounds(530, 92, 136, 26);
-    m_modernMixBtn.setBounds(674, 92, 136, 26);
-    m_profileDescLabel.setBounds(524, 120, 292, 16);
+    // Air Lift row and readout inside the Tonal Target card (x = 520 to 820)
+    m_airLiftLabel.setBounds(526, 94, 64, 22);
+    for (size_t i = 0; i < 4; ++i)
+        m_airLiftBtns[i].setBounds(594 + static_cast<int>(i) * 55, 94, 51, 22);
+    m_airLiftReadout.setBounds(524, 118, 292, 16);
 
     // Tone Curve Visualizer inside Profile Card
     m_toneVisualizer.setBounds(530, 138, 280, 80);
 
-    // Breakdown Freeze button inside Card 2 (AGC Gain Correction)
-    m_freezeBreakdownsButton.setBounds(288, 176, 204, 22);
+    // Breakdown Freeze toggle and sensitivity inside Card 2 (AGC Gain Correction, x = 270 to 510)
+    m_freezeBreakdownsButton.setBounds(282, 176, 98, 22);
+    for (size_t i = 0; i < 3; ++i)
+        m_breakdownBtns[i].setBounds(384 + static_cast<int>(i) * 40, 177, 37, 20);
 
     // AGC Slew Speed segmented row, centered under the freeze button (Card 2 spans 270-510)
     m_slewSpeedLabel.setBounds(306, 202, 40, 20);
@@ -1202,21 +1270,21 @@ void AutoLevelDJAudioProcessorEditor::layoutContent() {
     m_releaseManualBtn.setBounds(456, 242, 64, 20);
     m_releaseAutoBtn.setBounds(524, 242, 56, 20);
 
-    // Band EQ position switch inside Card 4 header (x = 594 to 800, where MBC Speed used to be)
-    m_eqPositionLabel.setBounds(594, 242, 26, 20);
-    m_eqBeforeBtn.setBounds(622, 242, 86, 20);
-    m_eqAfterBtn.setBounds(712, 242, 88, 20);
+    // Band fader mode switch inside Card 4 header (x = 594 to 800)
+    m_faderModeLabel.setBounds(594, 242, 52, 20);
+    m_faderContourBtn.setBounds(650, 242, 74, 20);
+    m_faderEqBtn.setBounds(728, 242, 72, 20);
 
     // 6-Band Meter Rack inside MBC Card, with each band's EQ fader in the right part of its column
     juce::Rectangle<int> rackBounds(26, 266, 788, 160);
     m_meterRack.setBounds(rackBounds);
     for (size_t b = 0; b < autolevel::dsp::Bands::COUNT; ++b) {
         float colX = MultibandMeterRack::columnX(b, static_cast<float>(rackBounds.getWidth()));
-        m_eqSliders[b].setBounds(rackBounds.getX() + static_cast<int>(colX) + 62, rackBounds.getY() + 22, 50, 136);
+        m_bandSliders[b].setBounds(rackBounds.getX() + static_cast<int>(colX) + 62, rackBounds.getY() + 22, 50, 136);
     }
 
     // Controls: 6 columns x 2 rows in Card 5. Row 1 is the level / AGC side, row 2 the MBC side.
-    int row1Y = 462;
+    int row1Y = 468;
     int row2Y = 576;
     int knobW = 92;
     int knobH = 82;

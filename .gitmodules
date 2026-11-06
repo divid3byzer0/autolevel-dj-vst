@@ -1,0 +1,3 @@
+[submodule "external/autolevel-core"]
+	path = external/autolevel-core
+	url = https://github.com/divid3byzer0/autolevel-core.git

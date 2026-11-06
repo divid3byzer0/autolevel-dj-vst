@@ -1,12 +1,27 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_dsp/juce_dsp.h>
-#include "dsp/AutoLevelEngine.h"
+#include "AudioEngine.h" // autolevel-core: the same engine and parameter store the box runs
 #include <array>
 
-class AutoLevelDJAudioProcessor : public juce::AudioProcessor, private juce::AsyncUpdater {
+/**
+ * AutoLevel DJ: the autolevel-box processing chain as a plugin.
+ *
+ * Sound parity with the box rests on three things, all here:
+ *  - the engine is autolevel-core's AudioEngine, the box's own parameter store and chain;
+ *  - every setting is one host parameter mapped 1:1 onto an AudioEngine::Param, with the box's
+ *    ranges and defaults;
+ *  - the engine always runs in BOX_BLOCK-frame blocks, the box's JACK period. The Leveler and
+ *    meters update once per block, so other block sizes give a (slightly) different result.
+ *    Collecting those blocks costs BOX_BLOCK frames of latency, reported to the host.
+ */
+class AutoLevelDJAudioProcessor : public juce::AudioProcessor {
 public:
+    using Param = autolevel::AudioEngine::Param;
+
+    /** The box's JACK period (service/autolevel-box.service, jackd -p 256). */
+    static constexpr int BOX_BLOCK = 256;
+
     AutoLevelDJAudioProcessor();
     ~AutoLevelDJAudioProcessor() override = default;
 
@@ -19,6 +34,8 @@ public:
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     using juce::AudioProcessor::processBlockBypassed;
     void processBlockBypassed(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
@@ -41,68 +58,46 @@ public:
 
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return m_apvts; }
     autolevel::dsp::EngineVisualState getVisualState() const noexcept { return m_engine.getVisualState(); }
+    /** The box's "Reset" button: clears loudness history and filter state, keeps settings. */
     void resetIntegration() noexcept { m_engine.reset(); }
+
+    /** Current settings as a box preset (the exact JSON autolevel-box saves). Message thread. */
+    std::string getPresetJson() const;
+    /**
+     * Apply a box preset. Goes through the box's own loader (clamping, legacy-field migration,
+     * unknown fields ignored), then pushes the result into the host parameters so it is
+     * automatable and saved with the session. Fields a preset lacks reset to the box defaults
+     * first, so loading always gives the box's sound for that preset. Message thread.
+     */
+    void loadPresetJson(const std::string& json);
+    /** Every setting back to the box's defaults (the box's "Default" preset). Message thread. */
+    void resetToDefaults();
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    // Parameter ID constants
-    static constexpr const char* ID_TARGET_LUFS = "target_lufs";
-    static constexpr const char* ID_MAX_BOOST = "max_boost";
-    static constexpr const char* ID_MAX_CUT = "max_cut";
-    static constexpr const char* ID_LEVEL_RESPONSE = "level_response";
-    static constexpr const char* ID_SLEW_SPEED = "slew_speed";
-    static constexpr const char* ID_COMPRESSION_AMOUNT = "compression_amount";
-    static constexpr const char* ID_TONE_SLOPE = "tone_slope";
-    static constexpr const char* ID_TARGET_PROFILE = "target_profile";
-    static constexpr const char* ID_MBC_ATTACK = "mbc_attack";
-    static constexpr const char* ID_MBC_RELEASE = "mbc_release";
-    static constexpr const char* ID_MBC_DETECTOR = "mbc_detector";
-    static constexpr const char* ID_MBC_RELEASE_MODE = "mbc_release_mode";
-    static constexpr const char* ID_EQ_POSITION = "eq_position";
-    static constexpr const char* ID_LIMITER_LOOKAHEAD = "limiter_lookahead";
-    static constexpr const char* ID_POST_MBC_GAIN = "post_mbc_gain";
-    static constexpr const char* ID_HPF_FREQ = "hpf_freq";
-    static constexpr const char* ID_CEILING_DB = "ceiling_db";
-    static constexpr const char* ID_FREEZE_BREAKDOWNS = "freeze_breakdowns";
-    static constexpr const char* ID_BYPASS = "bypass";
+    /** Host parameter ID for each engine parameter (AudioEngine::Param order). */
+    static const char* hostParamId(Param p) noexcept;
+    /** Engine value -> host parameter value, and back. Identity except Low Cut's "Off". */
+    static float toHostValue(Param p, float engineValue) noexcept;
+    static float toEngineValue(Param p, float hostValue) noexcept;
 
-    /** Band EQ gain parameter IDs, in autolevel::dsp::Bands order (Sub ... Air). */
-    static constexpr std::array<const char*, autolevel::dsp::Bands::COUNT> ID_EQ_BANDS = {
-        "eq_sub", "eq_bass", "eq_lowmid", "eq_highmid", "eq_presence", "eq_air"
-    };
+    /** Low Cut host value shown as "Off" (the engine's hpf_freq 0). */
+    static constexpr float HPF_OFF_HOST_VALUE = 19.5f;
 
 private:
-    autolevel::dsp::LimiterLookahead currentLookahead() const noexcept;
-    /** Reports the latency for the current lookahead; runs on the message thread. */
-    void handleAsyncUpdate() override;
+    void processChunked(juce::AudioBuffer<float>& buffer, bool forceBypass);
+    void pushParamsToEngine(bool forceBypass) noexcept;
+    void clearFifos() noexcept;
 
     juce::AudioProcessorValueTreeState m_apvts;
-    autolevel::dsp::AutoLevelEngine m_engine;
+    autolevel::AudioEngine m_engine;
+    std::array<std::atomic<float>*, autolevel::AudioEngine::PARAM_COUNT> m_params{};
+    juce::AudioProcessorParameter* m_bypassParam = nullptr;
 
-    // Parameter pointers
-    std::atomic<float>* m_targetLufsParam = nullptr;
-    std::atomic<float>* m_maxBoostParam = nullptr;
-    std::atomic<float>* m_maxCutParam = nullptr;
-    std::atomic<float>* m_levelResponseParam = nullptr;
-    std::atomic<float>* m_slewSpeedParam = nullptr;
-    std::atomic<float>* m_compressionAmountParam = nullptr;
-    std::atomic<float>* m_toneSlopeParam = nullptr;
-    std::atomic<float>* m_targetProfileParam = nullptr;
-    std::atomic<float>* m_mbcAttackParam = nullptr;
-    std::atomic<float>* m_mbcReleaseParam = nullptr;
-    std::atomic<float>* m_mbcDetectorParam = nullptr;
-    std::atomic<float>* m_mbcReleaseModeParam = nullptr;
-    std::atomic<float>* m_eqPositionParam = nullptr;
-    std::atomic<float>* m_lookaheadParam = nullptr;
-    std::atomic<double> m_sampleRate{48000.0};
-    /** Lookahead the audio thread last saw; -1 = none yet. Latency is re-reported when it changes. */
-    std::atomic<int> m_lastLookahead{-1};
-    std::array<std::atomic<float>*, autolevel::dsp::Bands::COUNT> m_eqBandParams{};
-    std::atomic<float>* m_postMbcGainParam = nullptr;
-    std::atomic<float>* m_hpfFreqParam = nullptr;
-    std::atomic<float>* m_ceilingDbParam = nullptr;
-    std::atomic<float>* m_freezeBreakdownsParam = nullptr;
-    std::atomic<float>* m_bypassParam = nullptr;
+    // BOX_BLOCK collection: input fills m_in while m_out (the previous block, processed) drains.
+    std::array<std::array<float, BOX_BLOCK>, 2> m_in{};
+    std::array<std::array<float, BOX_BLOCK>, 2> m_out{};
+    int m_fifoPos = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AutoLevelDJAudioProcessor)
 };
