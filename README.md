@@ -84,7 +84,7 @@ The plugin reports **358 samples at 48 kHz** (7.5 ms) to the host, which compens
 
 ## Formats & Deployment
 
-AutoLevel DJ is available for **macOS** (Apple Silicon & Intel Universal) and **Windows** (x64 / x86):
+AutoLevel DJ is available for **macOS** (Apple Silicon) and **Windows** (x64 / x86):
 
 1. **VST3 & AU Plugin:**
    * Load directly onto the Master track inside **Ableton Live**, **Logic Pro**, **FL Studio**, **Bitwig Studio**, **Cubase**, or any VST3/AU host DAW.
@@ -147,9 +147,9 @@ Compiled plugins will be located in:
   * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
   * `build/AutoLevelDJ_artefacts/Release/AU/AutoLevel DJ.component`
   * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.app`
-* **Windows:**
-  * `build/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
-  * `build/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
+* **Windows** (`build-x64`, or `build-x86` for 32-bit):
+  * `build-x64/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
+  * `build-x64/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
 
 ---
 
