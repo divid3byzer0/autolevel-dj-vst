@@ -77,7 +77,7 @@ float AutoLevelDJAudioProcessor::toEngineValue(Param p, float hostValue) noexcep
 
 juce::AudioProcessorValueTreeState::ParameterLayout AutoLevelDJAudioProcessor::createParameterLayout() {
     // Ranges and defaults are the box's (autolevel-core AudioEngine: constructor and setParam
-    // clamps). dsp_test checks every default here against a fresh AudioEngine.
+    // clamps). plugin_test checks every default here against a fresh AudioEngine.
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
     using Attr = juce::AudioParameterFloatAttributes;
     using MBC = autolevel::dsp::MBCParams;
