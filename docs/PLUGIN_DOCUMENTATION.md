@@ -313,6 +313,10 @@ guesses) found:
    the stale comment/documentation, not the number.** Done: comment corrected in
    `AutoLevelEngine.h`, dead `LevelerParams::targetLUFS` default aligned to −14, this doc's §3.5
    added to explain the relationship for anyone touching it later.
+   **Superseded 2026-10-03:** the offset is now **18 dB**, not 15 (owner's decision). The engine
+   computes `params.targetLUFS - Bands::MBC_THRESHOLD_BELOW_TARGET_DB` (= 18), so the base
+   threshold is −32 dBFS at the default −14 LUFS, and `Bands::MBC_THRESHOLD_DB` (−24) is no
+   longer reached at any Target LUFS the UI allows (−20 to −6). The −15 above is historical.
 2. **Tone Slope ("Tone Tilt") range narrowed** from −6.0…0.0 dB/oct to **−3.0…0.0 dB/oct**
    (default unchanged at −1.5 dB/oct) — per project owner, anything steeper than −3 dB/oct
    isn't useful. Updated: `PluginProcessor.cpp`'s parameter definition, `Bands::MIN_TONE_SLOPE`/
