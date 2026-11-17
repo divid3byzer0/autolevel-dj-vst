@@ -134,6 +134,11 @@ cmake --build build-x64 --config Release
 cmake -B build-x86 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-x86 --config Release
 
+# For 32-bit Windows (x86) with legacy VST2 as well (needs your own copy of the VST2 SDK,
+# the folder containing pluginterfaces\vst2.x\aeffect.h)
+cmake -B build-x86 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release -DVST2_SDK_PATH=C:/SDKs/vstsdk2.4
+cmake --build build-x86 --config Release
+
 # Run tests
 .\build-x64\Release\dsp_test.exe
 .\build-x64\Release\plugin_test.exe
@@ -150,6 +155,9 @@ Compiled plugins will be located in:
 * **Windows** (`build-x64`, or `build-x86` for 32-bit):
   * `build-x64/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
   * `build-x64/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
+  * `build-x86/AutoLevelDJ_artefacts/Release/VST/AutoLevel DJ.dll` (VST2, only when `VST2_SDK_PATH` is set; copy it to your host's VST plugins folder, e.g. `C:\Program Files (x86)\Steinberg\Vstplugins`)
+
+> **VST2 SDK:** Steinberg stopped distributing the VST2 SDK in 2018 and only developers who signed the VST2 license agreement before then may ship VST2 plugins. The SDK is not included or downloaded by this project. In CI, set the `VST2_SDK_REPO` secret to a private repo (`owner/name`) holding the SDK, readable by `CORE_REPO_TOKEN`, and the x86 release build will include `AutoLevel DJ.dll`.
 
 ---
 
