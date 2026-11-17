@@ -740,11 +740,14 @@ void AutoLevelDJAudioProcessorEditor::setupRotary(juce::Slider& slider, juce::La
                                                  const juce::String& text, const juce::String& suffix,
                                                  juce::Colour accentCol)
 {
+    // Add to the content first: the slider builds its value box from the LookAndFeel it has at
+    // that moment (setTextBoxStyle and setColour both rebuild it). Styled before joining the
+    // content, it got JUCE's default look (15 px plain, grey frame) instead of this editor's.
+    m_content.addAndMakeVisible(slider);
     slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 22);
     slider.setTextValueSuffix(suffix);
     slider.setColour(juce::Slider::rotarySliderFillColourId, accentCol);
-    m_content.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::FontOptions(11.0f, juce::Font::bold));

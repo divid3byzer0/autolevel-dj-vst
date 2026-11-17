@@ -762,17 +762,12 @@ struct Editor::Impl {
             c.setColour(WHITE);
             c.strokePath(needle, 2.5f);
         }
-        paintValueBox(c, k.valueBox(), k.param, valueText(k.param, v) + k.suffix, true);
+        paintValueBox(c, k.valueBox(), k.param, valueText(k.param, v) + k.suffix);
     }
 
-    /**
-     * A slider's value box. The faders' boxes use the editor's look (11.5 px bold on a dark fill).
-     * The knobs' boxes come out in JUCE's default look in the JUCE editor - each knob is
-     * recoloured before it joins the editor, which rebuilds its box with the default
-     * LookAndFeel_V4 - so they are drawn that way here too: 15 px regular, no fill, grey frame.
-     */
-    void paintValueBox(Canvas& c, RectF box, int param, const std::string& text, bool knobStyle = false) {
-        const Col bg = C(0xff12161f), outline = knobStyle ? C(0xff8e989b) : C(0xff222836);
+    /** A slider's value box (ModernHardwareLookAndFeel::createSliderTextBox): 11.5 px bold. */
+    void paintValueBox(Canvas& c, RectF box, int param, const std::string& text) {
+        const Col bg = C(0xff12161f), outline = C(0xff222836);
         if (edit != nullptr && editParam == param) {
             c.setColour(bg);
             c.fillRect(box);
@@ -780,8 +775,7 @@ struct Editor::Impl {
             c.drawRectInside(box);
             return;
         }
-        if (knobStyle) c.label(text, box, CENTRED, 15.0f, false, WHITE, nullptr, &outline);
-        else c.label(text, box, CENTRED, 11.5f, true, WHITE, &bg, &outline);
+        c.label(text, box, CENTRED, 11.5f, true, WHITE, &bg, &outline);
     }
 
     void paintFader(Canvas& c, const Fader& f) {
@@ -1621,11 +1615,9 @@ struct Editor::Impl {
         const int x = static_cast<int>(std::lround(box.x * scale)), y = static_cast<int>(std::lround(box.y * scale));
         const int w = static_cast<int>(std::lround(box.w * scale)), h = static_cast<int>(std::lround(box.h * scale));
         if (editFont != nullptr) DeleteObject(editFont);
-        bool knobBox = false;
-        for (const auto& k : knobs) if (k.param == param) knobBox = true;
-        const float fontH = knobBox ? 15.0f : 11.5f;
-        const int em = static_cast<int>(std::lround(fonts->emFor(fontH, !knobBox) * scale));
-        editFont = CreateFontW(-em, 0, 0, 0, knobBox ? FW_NORMAL : FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, fonts->familyName().c_str());
+        const float fontH = 11.5f;
+        const int em = static_cast<int>(std::lround(fonts->emFor(fontH, true) * scale));
+        editFont = CreateFontW(-em, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, fonts->familyName().c_str());
         // A single-line edit centres nothing vertically: inset it so the text sits mid-box.
         const int pad = std::max(1, (h - static_cast<int>(std::lround(fontH * scale))) / 2);
         edit = CreateWindowExW(0, L"EDIT", widen(valueText(param, plugin.hostValue(param))).c_str(),
