@@ -27,21 +27,6 @@ else()
     set(PLUGIN_FORMATS VST3 Standalone)
 endif()
 
-# Legacy VST2 (.dll on Windows, e.g. for 32-bit hosts). Steinberg no longer distributes the
-# VST2 SDK, so it can't be fetched here: point VST2_SDK_PATH at your own copy (the folder that
-# contains pluginterfaces/vst2.x/aeffect.h), e.g. -DVST2_SDK_PATH=C:/SDKs/vstsdk2.4
-set(VST2_SDK_PATH "$ENV{VST2_SDK_PATH}" CACHE PATH "Path to the VST2 SDK (enables the VST2 format)")
-if (VST2_SDK_PATH)
-    if (NOT EXISTS "${VST2_SDK_PATH}/pluginterfaces/vst2.x/aeffect.h")
-        message(FATAL_ERROR "VST2_SDK_PATH=${VST2_SDK_PATH} does not contain pluginterfaces/vst2.x/aeffect.h")
-    endif()
-    juce_set_vst2_sdk_path("${VST2_SDK_PATH}")
-    list(APPEND PLUGIN_FORMATS VST)
-    message(STATUS "VST2 SDK found at ${VST2_SDK_PATH}: building the VST2 format")
-else()
-    message(STATUS "VST2_SDK_PATH not set: skipping the VST2 format")
-endif()
-
 juce_add_plugin(AutoLevelDJ
     COMPANY_NAME "DistrictNoir"
     PLUGIN_MANUFACTURER_CODE DstN

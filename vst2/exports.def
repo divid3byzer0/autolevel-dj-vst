@@ -1,0 +1,4 @@
+LIBRARY "AutoLevel DJ.dll"
+EXPORTS
+    VSTPluginMain
+    main=VSTPluginMain

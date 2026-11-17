@@ -1,4 +1,4 @@
-# AutoLevel DJ (VST3 / AU / Standalone)
+# AutoLevel DJ (VST3 / AU / Standalone / 32-bit VST2)
 
 **Intelligent real-time master bus loudness leveling and multiband dynamic tone shaping for live DJ sets.**
 
@@ -88,7 +88,10 @@ AutoLevel DJ is available for **macOS** (Apple Silicon) and **Windows** (x64 / x
 
 1. **VST3 & AU Plugin:**
    * Load directly onto the Master track inside **Ableton Live**, **Logic Pro**, **FL Studio**, **Bitwig Studio**, **Cubase**, or any VST3/AU host DAW.
-2. **Standalone Application:**
+2. **32-bit VST2 (Windows x86):**
+   * For 32-bit VST2 hosts such as **foobar2000** (through its VST adapter component): a single file, `AutoLevel DJ.dll`, with the full editor. Copy it into the folder the host scans for VST plugins.
+   * Same engine and settings as the VST3; its saved state and presets are box-format JSON.
+3. **Standalone Application:**
    * For DJ software without native plugin hosting (e.g. **Traktor Pro**, **Rekordbox**, **Serato DJ Pro**, **VirtualDJ**):
    * Route your DJ software master output into a virtual loopback device (such as **BlackHole** or Rogue Amoeba **Loopback** on macOS, or **VB-Cable** on Windows).
    * Open the Standalone app, select the loopback device as Input, and your physical audio interface / DAC as Output.
@@ -134,11 +137,6 @@ cmake --build build-x64 --config Release
 cmake -B build-x86 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-x86 --config Release
 
-# For 32-bit Windows (x86) with legacy VST2 as well (needs your own copy of the VST2 SDK,
-# the folder containing pluginterfaces\vst2.x\aeffect.h)
-cmake -B build-x86 -G "Visual Studio 17 2022" -A Win32 -DCMAKE_BUILD_TYPE=Release -DVST2_SDK_PATH=C:/SDKs/vstsdk2.4
-cmake --build build-x86 --config Release
-
 # Run tests
 .\build-x64\Release\dsp_test.exe
 .\build-x64\Release\plugin_test.exe
@@ -155,9 +153,30 @@ Compiled plugins will be located in:
 * **Windows** (`build-x64`, or `build-x86` for 32-bit):
   * `build-x64/AutoLevelDJ_artefacts/Release/VST3/AutoLevel DJ.vst3`
   * `build-x64/AutoLevelDJ_artefacts/Release/Standalone/AutoLevel DJ.exe`
-  * `build-x86/AutoLevelDJ_artefacts/Release/VST/AutoLevel DJ.dll` (VST2, only when `VST2_SDK_PATH` is set; copy it to your host's VST plugins folder, e.g. `C:\Program Files (x86)\Steinberg\Vstplugins`)
 
-> **VST2 SDK:** Steinberg stopped distributing the VST2 SDK in 2018 and only developers who signed the VST2 license agreement before then may ship VST2 plugins. The SDK is not included or downloaded by this project. In CI, set the `VST2_SDK_REPO` secret to a private repo (`owner/name`) holding the SDK, readable by `CORE_REPO_TOKEN`, and the x86 release build will include `AutoLevel DJ.dll`.
+### 32-bit VST2 (Windows x86, no JUCE)
+
+The VST2 build lives in `vst2/` and does not use JUCE or the Steinberg VST2 SDK (no longer
+distributed): it implements the VST 2.4 interface directly and redraws the editor with Win32 +
+GDI+, matching the JUCE editor's layout, colours and controls. The engine is the same
+`autolevel-core`, run in the same 256-sample blocks, so the sound is identical. It is
+cross-compiled with MinGW-w64, on Linux or in MSYS2 on Windows:
+
+```bash
+# Linux (Debian/Ubuntu): sudo apt install g++-mingw-w64-i686
+# MSYS2 on Windows:      pacman -S mingw-w64-i686-gcc   (then run from the MINGW32 shell)
+vst2/build.sh            # -> build-vst2/AutoLevel DJ.dll
+```
+
+`vst2/test.sh` runs the test host under 32-bit Wine (Linux): the plugin's output must equal the
+engine's bit for bit, state and parameters must round-trip, and real mouse and keyboard input
+must drive every editor control. The DLL only depends on DLLs every Windows has.
+
+Differences from the VST3 build, all host-facing:
+* State is saved as the box-format preset JSON (the same text the Presets menu writes).
+* The editor resizes from its corner only in hosts that support VST2 window resizing.
+* The loudness history is kept when the host suspends and resumes the plugin (as players do
+  between tracks); it starts fresh only when the sample rate changes.
 
 ---
 

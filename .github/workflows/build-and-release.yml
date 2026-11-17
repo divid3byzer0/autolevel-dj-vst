@@ -99,12 +99,6 @@ jobs:
   build-windows-x86:
     name: Build Windows x86 (32-bit)
     runs-on: windows-latest
-    env:
-      # VST2: Steinberg no longer distributes the VST2 SDK, so it comes from a private repo of
-      # your own. Set the VST2_SDK_REPO secret to "owner/name" of a repo holding the SDK (with
-      # pluginterfaces/vst2.x/aeffect.h at its root); CORE_REPO_TOKEN must be able to read it.
-      # Without the secret the job still builds VST3 + Standalone and warns that VST2 was skipped.
-      VST2_SDK_REPO: ${{ secrets.VST2_SDK_REPO }}
 
     steps:
       - name: Checkout repository (with autolevel-core submodule)
@@ -115,31 +109,15 @@ jobs:
           # token with read access to divid3byzer0/autolevel-core as the CORE_REPO_TOKEN secret.
           token: ${{ secrets.CORE_REPO_TOKEN || github.token }}
 
-      - name: Checkout VST2 SDK (private)
-        if: env.VST2_SDK_REPO != ''
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.VST2_SDK_REPO }}
-          token: ${{ secrets.CORE_REPO_TOKEN }}
-          path: vst2sdk
-
-      - name: Warn if VST2 is skipped
-        if: env.VST2_SDK_REPO == ''
-        run: echo "::warning::VST2_SDK_REPO secret not set - building x86 without the VST2 format"
-
       - name: Set up MSVC environment (x86)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x86
 
       - name: Configure CMake (Ninja x86)
-        shell: pwsh
-        run: |
-          $vst2 = @()
-          if (Test-Path "vst2sdk/pluginterfaces/vst2.x/aeffect.h") { $vst2 = @("-DVST2_SDK_PATH=$PWD/vst2sdk") }
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release @vst2
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build VST2, VST3, Standalone, and Test
+      - name: Build VST3, Standalone, and Test
         run: cmake --build build --config Release
 
       - name: Run DSP Unit Tests
@@ -154,9 +132,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path package/windows-x86 | Out-Null
           Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\VST3\AutoLevel DJ.vst3" -Destination package/windows-x86/
           Copy-Item -Recurse -Path "build\AutoLevelDJ_artefacts\Release\Standalone\AutoLevel DJ.exe" -Destination package/windows-x86/
-          if (Test-Path "build\AutoLevelDJ_artefacts\Release\VST\AutoLevel DJ.dll") {
-            Copy-Item -Path "build\AutoLevelDJ_artefacts\Release\VST\AutoLevel DJ.dll" -Destination package/windows-x86/
-          }
           Compress-Archive -Path "package\windows-x86\*" -DestinationPath "autolevel-dj-windows-x86.zip"
 
       - name: Upload Windows x86 Zip
@@ -165,9 +140,45 @@ jobs:
           name: autolevel-dj-windows-x86
           path: autolevel-dj-windows-x86.zip
 
+  build-windows-x86-vst2:
+    name: Build Windows x86 VST2 (no JUCE, cross-compiled)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository (with autolevel-core submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.CORE_REPO_TOKEN || github.token }}
+
+      - name: Install MinGW-w64 (32-bit) and Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-i686 wine wine32:i386 xvfb
+
+      - name: Build AutoLevel DJ.dll (VST2, x86)
+        run: vst2/build.sh build-vst2
+
+      - name: Test under Wine (audio parity, state, parameters, editor)
+        run: vst2/test.sh build-vst2
+
+      - name: Package Windows x86 VST2
+        run: |
+          mkdir -p package/windows-x86-vst2
+          cp "build-vst2/AutoLevel DJ.dll" package/windows-x86-vst2/
+          cd package/windows-x86-vst2
+          zip -r "$GITHUB_WORKSPACE/autolevel-dj-windows-x86-vst2.zip" .
+
+      - name: Upload Windows x86 VST2 Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: autolevel-dj-windows-x86-vst2
+          path: autolevel-dj-windows-x86-vst2.zip
+
   release:
     name: Publish GitHub Release
-    needs: [build-macos, build-windows-x64, build-windows-x86]
+    needs: [build-macos, build-windows-x64, build-windows-x86, build-windows-x86-vst2]
     runs-on: ubuntu-latest
 
     steps:
@@ -185,6 +196,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: autolevel-dj-windows-x86
+
+      - name: Download Windows x86 VST2 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: autolevel-dj-windows-x86-vst2
 
       - name: Determine Release Tag
         id: tag_info
@@ -206,3 +222,4 @@ jobs:
             autolevel-dj-macos.zip
             autolevel-dj-windows-x64.zip
             autolevel-dj-windows-x86.zip
+            autolevel-dj-windows-x86-vst2.zip
